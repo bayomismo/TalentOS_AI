@@ -1,7 +1,7 @@
 'use client'
 
-import { Candidate } from '@/lib/data'
-import { StatusBadge } from './status-badge'
+import type { Candidate } from '@/types'
+import { StatusBadge } from '@/features/shared/components/status-badge'
 
 interface PipelineColumnProps {
   title: string

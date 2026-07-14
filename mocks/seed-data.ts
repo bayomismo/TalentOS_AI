@@ -1,39 +1,4 @@
-export type Position = {
-  id: string
-  title: string
-  department: string
-  openings: number
-  candidates: number
-  status: 'active' | 'closed'
-  createdAt: Date
-}
-
-export type Candidate = {
-  id: string
-  name: string
-  email: string
-  position: string
-  stage: 'applied' | 'screening' | 'interview' | 'offer' | 'hired'
-  rating: number
-  appliedAt: Date
-  avatar: string
-}
-
-export type Activity = {
-  id: string
-  type: 'application' | 'moved' | 'interview' | 'offer' | 'hired'
-  candidateName: string
-  positionTitle: string
-  timestamp: Date
-  details?: string
-}
-
-export type Metric = {
-  label: string
-  value: string | number
-  change?: number
-  trend?: 'up' | 'down'
-}
+import type { Activity, Candidate, Metric, Position } from '@/types'
 
 const positions: Position[] = [
   {

@@ -1,6 +1,6 @@
 'use client'
 
-import { Activity } from '@/lib/data'
+import type { Activity } from '@/types'
 import {
   FileTextIcon,
   CheckCircle2Icon,

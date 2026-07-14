@@ -1,7 +1,7 @@
 'use client'
 
-import { Position } from '@/lib/data'
-import { StatusBadge } from './status-badge'
+import type { Position } from '@/types'
+import { StatusBadge } from '@/features/shared/components/status-badge'
 
 interface HiringRequestsTableProps {
   positions: Position[]
