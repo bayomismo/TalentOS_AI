@@ -1,5 +1,20 @@
 'use client'
 
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  BriefcaseIcon,
+  DownloadIcon,
+  SparklesIcon,
+  TimerIcon,
+  TrendingUpIcon,
+  UserCheckIcon,
+  UsersIcon,
+} from 'lucide-react'
+import { PageHeader } from '@/components/shared/page-header'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/shared/card'
+import { Section } from '@/components/shared/section'
+import { Button } from '@/components/ui/button'
 import { ActivityTimeline } from '@/features/dashboard/components/activity-timeline'
 import { PipelineColumn } from '@/features/dashboard/components/pipeline-column'
 import { StatCard } from '@/features/dashboard/components/stat-card'
@@ -18,35 +33,59 @@ export default function DashboardPage() {
   const positions = getPositions()
 
   return (
-    <div className="space-y-6 p-8">
-      <section>
-        <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-50">
-          Key Metrics
-        </h3>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {metrics.map((metric, idx) => (
-            <StatCard
-              key={idx}
-              label={metric.label}
-              value={metric.value}
-              change={metric.change}
-              trend={metric.trend}
-            />
-          ))}
-        </div>
-      </section>
+    <div className="space-y-8 p-8">
+      <PageHeader
+        title="Recruitment Dashboard"
+        description="A real-time view of your hiring funnel. Track open roles, candidate flow, and recent activity across every team in one place."
+        badge={
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <SparklesIcon className="h-3 w-3" />
+            Live data
+          </span>
+        }
+        actions={
+          <>
+            <Button variant="outline">
+              <DownloadIcon className="h-4 w-4" />
+              Export
+            </Button>
+            <Button>
+              <SparklesIcon className="h-4 w-4" />
+              New hiring package
+            </Button>
+          </>
+        }
+      />
 
-      <section>
-        <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-50">
-          Open Positions
-        </h3>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {metrics.map((metric, idx) => (
+          <StatCard
+            key={idx}
+            label={metric.label}
+            value={metric.value}
+            change={metric.change}
+            trend={metric.trend}
+            icon={iconForMetric(metric.label)}
+          />
+        ))}
+      </div>
+
+      <Section
+        title="Open positions"
+        description="Every role your team is actively hiring for."
+        action={
+          <Button variant="outline" size="sm">
+            View all
+          </Button>
+        }
+      >
         <HiringRequestsTable positions={positions} />
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-50">
-          Candidate Pipeline
-        </h3>
+      <Section
+        title="Candidate pipeline"
+        description="Where every active candidate currently sits in the funnel."
+      >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           <PipelineColumn
             title="Applied"
@@ -79,16 +118,30 @@ export default function DashboardPage() {
             count={candidatesByStage.hired.length}
           />
         </div>
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-50">
-          Recent Activity
-        </h3>
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <ActivityTimeline activities={activities} />
-        </div>
-      </section>
+      <Section
+        title="Recent activity"
+        description="The latest events across all your open roles."
+      >
+        <Card>
+          <CardContent className="p-6">
+            <ActivityTimeline activities={activities} />
+          </CardContent>
+        </Card>
+      </Section>
     </div>
   )
+}
+
+function iconForMetric(label: string) {
+  const map: Record<string, React.ReactNode> = {
+    'Open Positions': <BriefcaseIcon className="h-5 w-5" />,
+    'Active Candidates': <UsersIcon className="h-5 w-5" />,
+    'Avg. Time to Hire': <TimerIcon className="h-5 w-5" />,
+    'Offer Conversion': <UserCheckIcon className="h-5 w-5" />,
+    'Pipeline Health': <TrendingUpIcon className="h-5 w-5" />,
+    'Candidates Hired (YTD)': <ArrowUpIcon className="h-5 w-5" />,
+  }
+  return map[label] ?? <ArrowDownIcon className="h-5 w-5" />
 }
