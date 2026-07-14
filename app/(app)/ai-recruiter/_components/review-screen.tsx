@@ -41,7 +41,15 @@ const FIELD_DEFS = {
   interviewQuestions: { label: 'Interview questions', icon: ClipboardListIcon, list: 'object' as const },
 } as const
 
-export function ReviewScreen() {
+export function ReviewScreen({
+  onSaveDraft,
+  onCreate,
+}: {
+  /** Called when the user clicks the "Save draft" button. */
+  onSaveDraft?: () => void
+  /** Called when the user clicks the "Create hiring request" button. */
+  onCreate?: () => void
+}) {
   const draft = useDraft()
   const phase = usePhase()
   const { dispatch } = useWizard()
@@ -228,10 +236,10 @@ export function ReviewScreen() {
                   next.splice(i, 1)
                   patch({ interviewQuestions: next })
                 }}
-                className="rounded-md p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 group-hover:opacity-100 dark:hover:bg-slate-700"
-                aria-label="Remove question"
+                className="rounded-md p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 focus:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-500/40 group-hover:opacity-100 dark:hover:bg-slate-700"
+                aria-label={`Remove interview question ${i + 1}`}
               >
-                <Trash2Icon className="h-4 w-4" />
+                <Trash2Icon className="h-4 w-4" aria-hidden />
               </button>
             </div>
           ))}
@@ -324,29 +332,30 @@ export function ReviewScreen() {
               onClick={() => dispatch({ type: 'generate-start' })}
               disabled={isSaving}
             >
-              <SparklesIcon className="h-4 w-4" />
+              <SparklesIcon className="h-4 w-4" aria-hidden />
               Regenerate
             </Button>
             <Button
               variant="outline"
-              onClick={() => dispatch({ type: 'save-start' })}
+              onClick={() => onSaveDraft?.()}
               disabled={isSaving}
             >
-              <SaveIcon className="h-4 w-4" />
+              <SaveIcon className="h-4 w-4" aria-hidden />
               Save draft
             </Button>
             <Button
-              onClick={() => dispatch({ type: 'save-start' })}
+              onClick={() => onCreate?.()}
               disabled={isSaving}
+              aria-label={isSaving ? 'Creating hiring request' : 'Create hiring request'}
             >
               {isSaving ? (
                 <>
-                  <Loader2Icon className="h-4 w-4 animate-spin" />
+                  <Loader2Icon className="h-4 w-4 animate-spin" aria-hidden />
                   Creating…
                 </>
               ) : (
                 <>
-                  <CheckIcon className="h-4 w-4" />
+                  <CheckIcon className="h-4 w-4" aria-hidden />
                   Create hiring request
                 </>
               )}
@@ -523,15 +532,16 @@ function ChipList({
             <input
               value={item}
               onChange={e => onPatch(i, e.target.value)}
+              aria-label={`Skill ${i + 1}`}
               className="h-8 w-32 bg-transparent text-sm text-slate-700 focus:outline-none dark:text-slate-200"
             />
             <button
               type="button"
               onClick={() => onRemove(i)}
-              className="rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 group-hover:opacity-100 dark:hover:bg-slate-700"
-              aria-label="Remove"
+              className="rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 focus:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-500/40 group-hover:opacity-100 dark:hover:bg-slate-700"
+              aria-label={`Remove skill ${i + 1}`}
             >
-              <Trash2Icon className="h-3.5 w-3.5" />
+              <Trash2Icon className="h-3.5 w-3.5" aria-hidden />
             </button>
           </div>
         ))}
@@ -570,6 +580,7 @@ function ListEditor({
             <textarea
               value={item}
               onChange={e => onPatch(i, e.target.value)}
+              aria-label={`Item ${i + 1}`}
               rows={2}
               className="flex-1 resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
             />
@@ -577,16 +588,17 @@ function ListEditor({
             <input
               value={item}
               onChange={e => onPatch(i, e.target.value)}
+              aria-label={`Item ${i + 1}`}
               className="h-9 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
             />
           )}
           <button
             type="button"
             onClick={() => onRemove(i)}
-            className="mt-1 rounded-md p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 group-hover:opacity-100 dark:hover:bg-slate-700"
-            aria-label="Remove"
+            className="mt-1 rounded-md p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-rose-500 focus:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-500/40 group-hover:opacity-100 dark:hover:bg-slate-700"
+            aria-label={`Remove item ${i + 1}`}
           >
-            <Trash2Icon className="h-4 w-4" />
+            <Trash2Icon className="h-4 w-4" aria-hidden />
           </button>
         </div>
       ))}

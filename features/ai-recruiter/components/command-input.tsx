@@ -10,6 +10,8 @@ interface CommandInputProps {
   onSubmit: () => void
   disabled?: boolean
   isRunning?: boolean
+  ariaLabel?: string
+  placeholder?: string
 }
 
 export function CommandInput({
@@ -18,6 +20,8 @@ export function CommandInput({
   onSubmit,
   disabled,
   isRunning,
+  ariaLabel,
+  placeholder = 'Hire Senior Frontend Developer...',
 }: CommandInputProps) {
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey && value.trim()) {
@@ -56,17 +60,20 @@ export function CommandInput({
             onChange={e => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled}
-            placeholder="Hire Senior Frontend Developer..."
+            placeholder={placeholder}
+            aria-label={ariaLabel ?? 'Describe the role you want to hire for'}
             rows={1}
-            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-slate-900 placeholder-slate-400 outline-none dark:text-slate-50 dark:placeholder-slate-500"
+            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-slate-900 placeholder-slate-400 outline-none focus-visible:ring-0 dark:text-slate-50 dark:placeholder-slate-500"
           />
           <motion.button
+            type="button"
             whileHover={{ scale: disabled ? 1 : 1.05 }}
             whileTap={{ scale: disabled ? 1 : 0.95 }}
             onClick={onSubmit}
             disabled={disabled || !value.trim()}
+            aria-label={isRunning ? 'Generating' : 'Generate hiring package'}
             className={cn(
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors',
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
               value.trim() && !disabled
                 ? 'bg-emerald-600 text-white hover:bg-emerald-500'
                 : 'bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-500'

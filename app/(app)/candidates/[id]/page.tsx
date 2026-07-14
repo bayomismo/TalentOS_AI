@@ -78,11 +78,11 @@ export default function CandidateProfilePage() {
         actions={
           <>
             <Button variant="outline">
-              <MailIcon className="h-4 w-4" />
+              <MailIcon className="h-4 w-4" aria-hidden />
               Message
             </Button>
             <Button variant="outline">
-              <CalendarIcon className="h-4 w-4" />
+              <CalendarIcon className="h-4 w-4" aria-hidden />
               Schedule interview
             </Button>
             <Button>Move to next stage</Button>
@@ -91,10 +91,15 @@ export default function CandidateProfilePage() {
         meta={
           <>
             <MetaItem icon={StarIcon}>
-              <span className="text-amber-500">
+              <span
+                className="text-amber-500"
+                role="img"
+                aria-label={`${candidate.rating} out of 5 stars`}
+              >
                 {Array.from({ length: 5 }).map((_, i) => (
                   <StarIcon
                     key={i}
+                    aria-hidden
                     className={cn(
                       'inline h-3.5 w-3.5',
                       i < candidate.rating ? 'fill-current' : 'opacity-30'

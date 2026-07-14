@@ -70,17 +70,18 @@ export default function CandidatesPage() {
         <CardContent className="space-y-5 p-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative flex-1 lg:max-w-md">
-              <SearchIcon className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search by name, email, or role…"
+                aria-label="Search candidates"
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex gap-1.5">
+              <div role="group" aria-label="Filter by stage" className="flex gap-1.5">
                 {STAGE_FILTERS.map(s => {
                   const active = s.id === stage
                   return (
@@ -88,8 +89,9 @@ export default function CandidatesPage() {
                       key={s.id}
                       type="button"
                       onClick={() => setStage(s.id)}
+                      aria-pressed={active}
                       className={cn(
-                        'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                        'rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
                         active
                           ? 'bg-emerald-500 text-white shadow-sm'
                           : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
@@ -101,12 +103,17 @@ export default function CandidatesPage() {
                 })}
               </div>
 
-              <div className="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800">
+              <div
+                role="group"
+                aria-label="View as"
+                className="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800"
+              >
                 <button
                   type="button"
                   onClick={() => setView('grid')}
+                  aria-pressed={view === 'grid'}
                   className={cn(
-                    'rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                    'rounded-md px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
                     view === 'grid'
                       ? 'bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-slate-50'
                       : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-50'
@@ -117,8 +124,9 @@ export default function CandidatesPage() {
                 <button
                   type="button"
                   onClick={() => setView('list')}
+                  aria-pressed={view === 'list'}
                   className={cn(
-                    'rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                    'rounded-md px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
                     view === 'list'
                       ? 'bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-slate-50'
                       : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-50'

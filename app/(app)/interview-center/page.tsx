@@ -197,14 +197,20 @@ export default function InterviewCenterPage() {
                 {tab === 'all' && 'Every interview across your pipeline.'}
               </CardDescription>
             </div>
-            <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800">
+            <div
+              role="tablist"
+              aria-label="Filter interviews by time"
+              className="flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800"
+            >
               {TABS.map(t => (
                 <button
                   key={t.id}
                   type="button"
+                  role="tab"
+                  aria-selected={tab === t.id}
                   onClick={() => setTab(t.id)}
                   className={cn(
-                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
                     tab === t.id
                       ? 'bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-900'
                       : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-50'

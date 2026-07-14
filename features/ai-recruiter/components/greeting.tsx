@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { SparklesIcon } from 'lucide-react'
 
@@ -16,6 +17,13 @@ interface GreetingProps {
 }
 
 export function Greeting({ role, isWorking }: GreetingProps) {
+  // Compute the time-of-day string client-side only, so the server
+  // doesn't lock the timezone and trigger a hydration mismatch.
+  const [greeting, setGreeting] = useState('Hello')
+  useEffect(() => {
+    setGreeting(getGreeting())
+  }, [])
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -55,7 +63,7 @@ export function Greeting({ role, isWorking }: GreetingProps) {
           </>
         ) : (
           <>
-            {getGreeting()},{' '}
+            {greeting},{' '}
             <span className="text-slate-500 dark:text-slate-400">
               what role are you hiring for?
             </span>

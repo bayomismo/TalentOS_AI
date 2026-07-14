@@ -11,7 +11,7 @@
 
 import { config as loadEnv } from 'dotenv'
 
-import { getAIEngine, _resetAIEngine } from '@/lib/ai/service/ai-engine'
+import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { _resetProviderCache, getAIProvider } from '@/lib/ai/providers/provider-factory'
 import {
   AIEngineError,
@@ -60,7 +60,6 @@ async function main() {
   ok('health payload has checkedAt ISO', !Number.isNaN(Date.parse(health.checkedAt)))
 
   console.log('\n== Engine facade ==')
-  _resetAIEngine()
   const engine = getAIEngine()
   ok('engine exposes the same provider', engine.getProvider() === provider)
   const healthViaEngine = await engine.health()

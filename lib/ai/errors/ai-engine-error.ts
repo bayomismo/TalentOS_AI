@@ -56,13 +56,6 @@ export class ProviderNotConfiguredError extends AIEngineError {
   }
 }
 
-/** The provider raised an error (network, auth, rate limit, etc.). */
-export class ProviderRequestError extends AIEngineError {
-  constructor(provider: string, message: string, cause?: unknown) {
-    super('PROVIDER_REQUEST_FAILED', message, { provider, cause, retryable: false })
-  }
-}
-
 /** The provider returned data that did not match the Zod schema. */
 export class SchemaValidationError extends AIEngineError {
   public readonly issues: unknown

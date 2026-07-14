@@ -10,7 +10,7 @@
  *  - Side-effect free: no DB writes, no logging to stdout.
  */
 
-import type { z, ZodType } from 'zod'
+import type { ZodType } from 'zod'
 import type {
   GenerateOptions,
   ProviderHealth,
@@ -67,9 +67,3 @@ export interface AIProvider {
    */
   extractUsage(raw: unknown): TokenUsage
 }
-
-/**
- * Helper type to map a Zod schema to its inferred TypeScript type.
- * Used by the engine when it returns `ProviderResult<T>`.
- */
-export type InferSchema<T extends ZodType> = z.infer<T>

@@ -36,20 +36,35 @@ export interface DashboardData {
 export async function getDashboardDataAction(): Promise<DashboardData> {
   const orgId = await getDefaultOrgId()
 
-  const [positions, candidates, activities] = await Promise.all([
+  const [positions, candidateGroups, activities] = await Promise.all([
     db.hiringRequest.findMany({
       where: { organizationId: orgId },
-      include: { department: { select: { name: true } } },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        openings: true,
+        filled: true,
+        createdAt: true,
+        department: { select: { name: true } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),
-    db.candidate.findMany({
+    // groupBy runs in the database, returning only the aggregated counts
+    // — much cheaper than pulling every candidate row.
+    db.candidate.groupBy({
+      by: ['stage'],
       where: { organizationId: orgId },
-      select: { stage: true },
+      _count: { _all: true },
     }),
     db.activity.findMany({
       where: { organizationId: orgId },
-      include: {
+      select: {
+        id: true,
+        type: true,
+        description: true,
+        occurredAt: true,
         actor: { select: { firstName: true, lastName: true } },
         candidate: { select: { firstName: true, lastName: true } },
         hiringRequest: { select: { title: true } },
@@ -60,14 +75,21 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
   ])
 
   const candidatesByStage = {
-    applied: candidates.filter(c => c.stage === 'APPLIED').length,
-    screening: candidates.filter(c => c.stage === 'SCREENING').length,
-    interview: candidates.filter(c => c.stage === 'INTERVIEW').length,
-    offer: candidates.filter(c => c.stage === 'OFFER').length,
-    hired: candidates.filter(c => c.stage === 'HIRED').length,
+    applied: 0,
+    screening: 0,
+    interview: 0,
+    offer: 0,
+    hired: 0,
   }
-
-  const totalCandidates = candidates.length
+  let totalCandidates = 0
+  for (const g of candidateGroups) {
+    totalCandidates += g._count._all
+    if (g.stage === 'APPLIED') candidatesByStage.applied = g._count._all
+    else if (g.stage === 'SCREENING') candidatesByStage.screening = g._count._all
+    else if (g.stage === 'INTERVIEW') candidatesByStage.interview = g._count._all
+    else if (g.stage === 'OFFER') candidatesByStage.offer = g._count._all
+    else if (g.stage === 'HIRED') candidatesByStage.hired = g._count._all
+  }
   const openPositions = positions.filter(p => p.status === 'OPEN').length
   const totalOpenings = positions.filter(p => p.status === 'OPEN').reduce((sum, p) => sum + p.openings, 0)
   const hired = candidatesByStage.hired

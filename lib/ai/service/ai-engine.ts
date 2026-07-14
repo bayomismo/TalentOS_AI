@@ -16,7 +16,7 @@
  *   5. On second failure: throw `SchemaValidationError`.
  */
 
-import type { z, ZodType } from 'zod'
+import type { ZodType } from 'zod'
 
 import { getAIProvider } from '../providers/provider-factory'
 import type { AIProvider } from '../providers/base-provider'
@@ -159,7 +159,6 @@ function serializeZodError(err: unknown): unknown {
 
 /** Re-export the prompt's Zod schema type for callers. */
 export type { JobDescriptionOutput }
-export type JobDescriptionResult = ProviderResult<JobDescriptionOutput>
 
 /** Singleton for convenience — production code should pass a provider explicitly when DI matters. */
 let defaultEngine: AIEngine | null = null
@@ -171,12 +170,6 @@ export function getAIEngine(): AIEngine {
   return defaultEngine
 }
 
-/** Test-only — clears the cached default engine. */
-export function _resetAIEngine(): void {
-  defaultEngine = null
-}
-
 /** Convenience re-exports for ergonomic imports. */
 export { jobDescriptionOutputSchema, jobDescriptionPrompt }
 export type { JobDescriptionInput }
-export type { z as ZodNamespace }

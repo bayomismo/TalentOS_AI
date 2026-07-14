@@ -46,21 +46,27 @@ class EventBus {
   /** Fire an event synchronously to all subscribers. */
   publish(event: TalentOSEvent): void {
     const typed = this.listeners.get(event.type)
-    if (typed) {
-      // Copy to allow listeners to unsubscribe during iteration.
-      for (const listener of Array.from(typed)) {
+    if (typed && typed.size > 0) {
+      // Snapshot to a copy so listeners that unsubscribe during dispatch
+      // don't mutate the set we're iterating. Array.from is O(n) but
+      // listeners-per-event is small (<10 in practice).
+      const snapshot = Array.from(typed)
+      for (let i = 0; i < snapshot.length; i++) {
         try {
-          listener(event)
+          snapshot[i]!(event)
         } catch (err) {
           console.error('[event-bus] listener error', err)
         }
       }
     }
-    for (const listener of Array.from(this.wildcardListeners)) {
-      try {
-        listener(event)
-      } catch (err) {
-        console.error('[event-bus] wildcard listener error', err)
+    if (this.wildcardListeners.size > 0) {
+      const snapshot = Array.from(this.wildcardListeners)
+      for (let i = 0; i < snapshot.length; i++) {
+        try {
+          snapshot[i]!(event)
+        } catch (err) {
+          console.error('[event-bus] wildcard listener error', err)
+        }
       }
     }
   }
@@ -81,16 +87,19 @@ let bus: EventBus | null = null
 
 /** Returns the process-wide bus instance. */
 export function getEventBus(): EventBus {
-  if (typeof window === 'undefined' && !bus) {
-    bus = new EventBus()
-  } else if (typeof window !== 'undefined' && !(window as unknown as { __talentosBus?: EventBus }).__talentosBus) {
-    // Use a window-attached bus in the browser so dev-mode HMR doesn't
-    // create multiple instances per session.
-    ;(window as unknown as { __talentosBus: EventBus }).__talentosBus = new EventBus()
-    bus = (window as unknown as { __talentosBus: EventBus }).__talentosBus
-  } else if (!bus) {
-    bus = new EventBus()
+  // On the server, a single module-scoped instance is enough. In the
+  // browser we cache on `window` so HMR doesn't create a fresh bus
+  // (and silently lose subscribers) on every file save.
+  if (typeof window === 'undefined') {
+    if (!bus) bus = new EventBus()
+    return bus
   }
+  type WindowWithBus = Window & { __talentosBus?: EventBus }
+  const w = window as WindowWithBus
+  if (!w.__talentosBus) {
+    w.__talentosBus = new EventBus()
+  }
+  bus = w.__talentosBus
   return bus
 }
 
@@ -99,7 +108,8 @@ export function _resetEventBus(): void {
   bus?.reset()
   bus = null
   if (typeof window !== 'undefined') {
-    delete (window as unknown as { __talentosBus?: EventBus }).__talentosBus
+    type WindowWithBus = Window & { __talentosBus?: EventBus }
+    delete (window as WindowWithBus).__talentosBus
   }
 }
 
