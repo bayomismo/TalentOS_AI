@@ -29,10 +29,10 @@ import {
   ProviderNotConfiguredError,
 } from '../errors/ai-engine-error'
 
-const DEFAULT_MODEL = 'gemini-2.0-flash'
-
-function resolveModel(): string {
-  return process.env.GEMINI_MODEL || DEFAULT_MODEL
+function resolveModel(): string | null {
+  const model = process.env.GEMINI_MODEL
+  if (!model || model.trim() === '') return null
+  return model
 }
 
 function readApiKey(): string | null {
@@ -48,13 +48,14 @@ export class GeminiProvider implements AIProvider {
 
   constructor(options: { apiKey?: string; model?: string } = {}) {
     const apiKey = options.apiKey ?? readApiKey()
-    this.model = options.model ?? resolveModel()
+    const model = options.model ?? resolveModel()
 
-    if (!apiKey) {
+    if (!apiKey || !model) {
       this.client = null
     } else {
       this.client = new GoogleGenAI({ apiKey })
     }
+    this.model = model ?? 'unconfigured'
   }
 
   getModelName(): string {
@@ -67,7 +68,8 @@ export class GeminiProvider implements AIProvider {
 
   private ensureClient(): GoogleGenAI {
     if (!this.client) {
-      throw new ProviderNotConfiguredError('gemini', 'GEMINI_API_KEY')
+      const missing = !readApiKey() ? 'GEMINI_API_KEY' : 'GEMINI_MODEL'
+      throw new ProviderNotConfiguredError('gemini', missing)
     }
     return this.client
   }
@@ -76,12 +78,13 @@ export class GeminiProvider implements AIProvider {
     const checkedAt = new Date().toISOString()
 
     if (!this.isConfigured()) {
+      const missing = !readApiKey() ? 'GEMINI_API_KEY' : 'GEMINI_MODEL'
       return {
         provider: this.name,
         model: this.model,
         status: 'unconfigured',
         latencyMs: null,
-        error: 'GEMINI_API_KEY is not set',
+        error: `${missing} is not set`,
         checkedAt,
       }
     }

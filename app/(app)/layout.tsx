@@ -6,6 +6,7 @@ import { AppHeader } from '@/components/layout/app-header'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { CommandPalette } from '@/components/layout/command-palette'
 import { getPageTitle } from '@/config/navigation'
+import { EventBusProvider } from '@/lib/events'
 
 export default function AppLayout({
   children,
@@ -29,25 +30,27 @@ export default function AppLayout({
   }, [])
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900">
-      <AppSidebar
-        open={sidebarOpen}
-        onToggle={() => setSidebarOpen(prev => !prev)}
-      />
-
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <AppHeader
-          title={getPageTitle(pathname)}
-          onOpenCommandPalette={() => setShowCommandPalette(true)}
+    <EventBusProvider>
+      <div className="flex h-screen bg-slate-50 dark:bg-slate-900">
+        <AppSidebar
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen(prev => !prev)}
         />
 
-        <CommandPalette
-          open={showCommandPalette}
-          onClose={() => setShowCommandPalette(false)}
-        />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <AppHeader
+            title={getPageTitle(pathname)}
+            onOpenCommandPalette={() => setShowCommandPalette(true)}
+          />
 
-        <div className="overflow-auto flex-1">{children}</div>
-      </main>
-    </div>
+          <CommandPalette
+            open={showCommandPalette}
+            onClose={() => setShowCommandPalette(false)}
+          />
+
+          <div className="overflow-auto flex-1">{children}</div>
+        </main>
+      </div>
+    </EventBusProvider>
   )
 }
