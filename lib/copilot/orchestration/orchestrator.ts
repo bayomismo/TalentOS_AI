@@ -164,6 +164,9 @@ export async function askCopilot(args: AskCopilotArgs): Promise<AskCopilotResult
     return await handleActionRequest(ctx, intent.actionId, args, start)
   }
 
+  // Fall through to read query handler
+  return await handleReadQuery(ctx, args, start)
+
   // READ_QUERY: existing Sprint 11 flow
   return await handleReadQuery(ctx, args, start)
 }
@@ -400,8 +403,6 @@ async function extractActionArguments(
   const action = getActionById(actionId)
   if (!action) return { ok: false, message: 'Action not found.' }
   const allowed = getAllowedActionIds()
-  const catalog = getActionsCatalogForModel()
-
   const systemPrompt = `You are the TalentOS AI Copilot action argument extractor.
 
 The user wants to perform the action: ${actionId}
@@ -426,6 +427,9 @@ Do not wrap in markdown. Emit JSON only.`
 
   const userPrompt = `# USER REQUEST\n${userMessage}${historyBlock}\n\n# ALLOWED ACTIONS (whitelist)\n${allowed.join(', ')}\n\n# REMINDER\nReturn JSON only. Do not invent values.`
 
+  // PART 25: graceful failure — if the model is unavailable, do NOT silently
+  // fabricate arguments. Return a clear "extraction failed" outcome so the
+  // user can retry. PART 4: this is NOT a business mutation, so it's safe.
   try {
     const engine = getAIEngine()
     const result = await engine.callCopilotRouter(systemPrompt, userPrompt)
@@ -433,7 +437,6 @@ Do not wrap in markdown. Emit JSON only.`
     const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
     const parsed = JSON.parse(jsonText) as { arguments?: Record<string, unknown> }
     const args = parsed.arguments ?? {}
-    // Strip any keys that are not in the action's input schema
     const allowedKeys = getInputKeys(action.inputSchema)
     const filtered: Record<string, unknown> = {}
     for (const k of Object.keys(args)) {
@@ -441,7 +444,11 @@ Do not wrap in markdown. Emit JSON only.`
     }
     return { ok: true, arguments: filtered }
   } catch (err) {
-    return { ok: false, message: 'Could not extract action arguments from your request.' }
+    // PART 25: do not let the model crash the UI. Return a clear outcome
+    // so the user knows the AI is having trouble.
+    const reason = err instanceof Error ? err.message : 'unknown'
+    console.error('[copilot] extractActionArguments failed:', reason)
+    return { ok: false, message: 'I could not interpret your request. Please rephrase it with the specific details (e.g. title, department, candidate name).' }
   }
 }
 
