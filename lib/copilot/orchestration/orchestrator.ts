@@ -541,13 +541,26 @@ Do not wrap in markdown. Emit JSON only.`
 }
 
 function getInputKeys(schema: z.ZodType<any>): Set<string> {
-  const shape = (schema as any)._def?.shape?.() ?? (schema as any)._def?.schema?._def?.shape?.()
-  if (shape && typeof shape === 'object') {
-    return new Set(Object.keys(shape))
-  }
-  // Fallback: try the zod object signature
-  if ((schema as any).shape) {
-    return new Set(Object.keys((schema as any).shape))
+  try {
+    // Zod 3.x: schema._def is a ZodObjectDef. .shape() is a getter-as-function in some versions.
+    // In Zod 4.x and most builds, the shape lives at ._def.shape as a plain object OR
+    // .shape directly on the schema. We try all known locations.
+    const def = (schema as any)._def
+    let shape: any = null
+    if (def) {
+      shape = typeof def.shape === 'function' ? def.shape() : def.shape
+      if (!shape && def.schema?._def) {
+        shape = typeof def.schema._def.shape === 'function' ? def.schema._def.shape() : def.schema._def.shape
+      }
+    }
+    if (!shape && (schema as any).shape && typeof (schema as any).shape === 'object') {
+      shape = (schema as any).shape
+    }
+    if (shape && typeof shape === 'object') {
+      return new Set(Object.keys(shape))
+    }
+  } catch (err) {
+    console.warn('[copilot] getInputKeys failed:', err instanceof Error ? err.message : err)
   }
   return new Set()
 }
