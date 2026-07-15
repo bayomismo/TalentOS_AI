@@ -9,6 +9,7 @@ import {
   TrendingUpIcon,
   UsersIcon,
   BriefcaseIcon,
+  SparklesIcon,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -61,6 +62,12 @@ export const navItems: NavItem[] = [
     href: '/offers',
     icon: BriefcaseIcon,
     title: 'Offers',
+  },
+  {
+    label: 'AI Copilot',
+    href: '/copilot',
+    icon: SparklesIcon,
+    title: 'AI Copilot',
   },
   {
     label: 'Analytics',

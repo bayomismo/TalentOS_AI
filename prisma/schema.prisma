@@ -262,6 +262,7 @@ enum AITaskType {
   GENERIC
   DECISION_BRIEF
   OFFER_LETTER
+  COPILOT_QUERY
 }
 
 enum AITaskStatus {

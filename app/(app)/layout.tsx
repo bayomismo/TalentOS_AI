@@ -36,6 +36,10 @@ function AppLayoutInner({
         e.preventDefault()
         setShowCommandPalette(prev => !prev)
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
+        e.preventDefault()
+        window.location.href = '/copilot'
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)

@@ -199,6 +199,22 @@ export class AIEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Sprint 11 — Copilot router (lightweight structured call)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Lightweight call used by the Copilot intent router. Returns
+   * the raw model text. The Copilot validates the output with its
+   * own Zod schema.
+   */
+  async callCopilotRouter(systemPrompt: string, userPrompt: string): Promise<ProviderResult<string>> {
+    return this.provider.generate(`${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`, {
+      responseMimeType: 'application/json',
+      temperature: 0.1,
+    })
+  }
+
+  // ---------------------------------------------------------------------------
   // Sprint 10 — AI Offer Letter call helper
   // ---------------------------------------------------------------------------
 

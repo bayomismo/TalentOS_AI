@@ -124,6 +124,9 @@ export type AuditAction =
   | 'OFFER_DECLINED'
   | 'OFFER_WITHDRAWN'
   | 'OFFER_EXPIRED'
+  | 'COPILOT_QUERY_EXECUTED'
+  | 'COPILOT_TOOL_BLOCKED'
+  | 'COPILOT_PROMPT_INJECTION_BLOCKED'
 
 /** Resolved authenticated context. The session is JWT-backed; the
  * `passwordChangedAt` and `disabledAt` fields are re-read on every request
