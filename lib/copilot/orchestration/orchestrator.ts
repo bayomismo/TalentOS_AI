@@ -207,6 +207,7 @@ async function handleActionRequest(
     return { ok: false, outcome: { kind: 'error', message: 'Could not validate the AI\'s argument extraction. Please try rephrasing.' } }
   }
   if (!inputParse.success) {
+    console.log('[copilot] inputParse failed, issues=', JSON.stringify(inputParse.error.issues).slice(0, 500))
     // PART 6: ask the user to clarify missing fields rather than invent.
     // Use the Zod error's path to get the exact missing field names.
     // Zod 4 issues have: code='invalid_type', expected=<type>, message='...received undefined'.
@@ -224,6 +225,7 @@ async function handleActionRequest(
       // Fall back to scanning the schema
       missing.push(...extractMissingFields(action.inputSchema, argExtraction.arguments))
     }
+    console.log('[copilot] detected missing fields:', missing)
     const question = buildClarificationQuestion(actionId, missing, argExtraction.arguments)
     return {
       ok: true,
@@ -509,6 +511,7 @@ Do not wrap in markdown. Emit JSON only.`
     for (const k of Object.keys(args)) {
       if (allowedKeys.has(k)) filtered[k] = args[k]
     }
+    console.log('[copilot] extracted args:', JSON.stringify(filtered).slice(0, 500))
     return { ok: true, arguments: filtered }
   } catch (err) {
     const reason = err instanceof Error ? err.message : 'unknown'
