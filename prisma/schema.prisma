@@ -190,6 +190,9 @@ enum DecisionValue {
 
 enum OfferStatus {
   DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ISSUED
   SENT
   UNDER_REVIEW
   ACCEPTED
@@ -237,6 +240,15 @@ enum ActivityType {
   CANDIDATE_HELD
   CANDIDATE_REJECTED
   CANDIDATE_ADVANCED
+  OFFER_CREATED
+  OFFER_DRAFT_GENERATED
+  OFFER_EDITED
+  OFFER_SUBMITTED_FOR_APPROVAL
+  OFFER_RETURNED_FOR_CHANGES
+  OFFER_APPROVED
+  OFFER_ISSUED
+  OFFER_WITHDRAWN
+  OFFER_EXPIRED
 }
 
 enum AITaskType {
@@ -249,6 +261,7 @@ enum AITaskType {
   OUTREACH
   GENERIC
   DECISION_BRIEF
+  OFFER_LETTER
 }
 
 enum AITaskStatus {
@@ -382,6 +395,9 @@ model User {
   invitationsCreated      Invitation[]           @relation("InvitationCreator")
   auditLogs               AuditLog[]             @relation("AuditLogActor")
   authSessions            AuthSession[]
+  offersCreated           Offer[]                @relation("OfferCreator")
+  offersApproved          Offer[]                @relation("OfferApprover")
+  offersIssued            Offer[]                @relation("OfferIssuer")
 
   @@index([organizationId])
   @@index([organizationId, role])
@@ -800,15 +816,48 @@ model Offer {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  // Sprint 10 — workflow actors + content
+  createdById            String?   @db.Uuid
+  approvedById           String?   @db.Uuid
+  approvedAt             DateTime?
+  issuedById             String?   @db.Uuid
+  issuedAt               DateTime?
+  withdrawnAt            DateTime?
+  withdrawnReason        String?
+  expiredAt              DateTime?
+  employmentType         String? // FULL_TIME | PART_TIME | CONTRACT | INTERN
+  workArrangement        String? // REMOTE | ONSITE | HYBRID
+  probationPeriodDays    Int?
+  noticePeriodDays       Int?
+  vacationDays           Int?
+  commissionAmount       Int?
+  benefits               String?   @db.Text
+  additionalTerms        String?   @db.Text
+  /// AI-generated offer-letter content (validated Zod structure)
+  draftContent           Json?
+  aiGeneratedAt          DateTime?
+  aiTaskId               String?   @db.Uuid
+  aiPromptVersion        String?
+  aiModelUsed            String?
+
   organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   hiringRequest HiringRequest @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
   candidate     Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  createdBy     User?         @relation("OfferCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy    User?         @relation("OfferApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  issuedBy      User?         @relation("OfferIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  aiTask        AITask?       @relation(fields: [aiTaskId], references: [id], onDelete: SetNull)
   activities    Activity[]
 
   @@index([organizationId])
   @@index([hiringRequestId])
   @@index([candidateId])
   @@index([status])
+  @@index([createdById])
+  @@index([approvedById])
+  @@index([issuedById])
+  @@index([aiTaskId])
+  @@index([candidateId, hiringRequestId, status])
 }
 
 // -----------------------------------------------------------------------------
@@ -877,6 +926,7 @@ model AITask {
   hiringRequest  HiringRequest?   @relation(fields: [hiringRequestId], references: [id], onDelete: SetNull)
   jobDescription JobDescription?  @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
   createdBy      User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  offers         Offer[]
   conversations  AIConversation[]
 
   @@index([organizationId, status])

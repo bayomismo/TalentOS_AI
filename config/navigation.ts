@@ -8,6 +8,7 @@ import {
   SettingsIcon,
   TrendingUpIcon,
   UsersIcon,
+  BriefcaseIcon,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -54,6 +55,12 @@ export const navItems: NavItem[] = [
     href: '/interview-center',
     icon: CalendarIcon,
     title: 'Interview Center',
+  },
+  {
+    label: 'Offers',
+    href: '/offers',
+    icon: BriefcaseIcon,
+    title: 'Offers',
   },
   {
     label: 'Analytics',

@@ -49,7 +49,7 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
   }
   const orgId = auth.data.organizationId
 
-  const [positions, candidateGroups, activities] = await Promise.all([
+  const [positions, candidateGroups, activities, offerCounts, expiringSoonCount] = await Promise.all([
     db.hiringRequest.findMany({
       where: { organizationId: orgId },
       select: {
@@ -85,6 +85,19 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
       orderBy: { occurredAt: 'desc' },
       take: 20,
     }),
+    // Sprint 10 — offer metrics
+    db.offer.groupBy({
+      by: ['status'],
+      where: { organizationId: orgId },
+      _count: { _all: true },
+    }),
+    db.offer.count({
+      where: {
+        organizationId: orgId,
+        status: 'ISSUED' as never,
+        expiresAt: { gte: new Date(), lte: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+      },
+    }),
   ])
 
   const candidatesByStage = {
@@ -107,12 +120,24 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
   const totalOpenings = positions.filter(p => p.status === 'OPEN').reduce((sum, p) => sum + p.openings, 0)
   const hired = candidatesByStage.hired
 
+  // Sprint 10 — offer metrics
+  const offerByStatus: Record<string, number> = {}
+  for (const g of offerCounts) offerByStatus[g.status] = g._count._all
+  const pendingApproval = offerByStatus['PENDING_APPROVAL'] ?? 0
+  const issuedOffers = offerByStatus['ISSUED'] ?? 0
+  const acceptedOffers = offerByStatus['ACCEPTED'] ?? 0
+  const acceptanceRate = issuedOffers + acceptedOffers > 0
+    ? Math.round((acceptedOffers / (issuedOffers + acceptedOffers)) * 100)
+    : 0
+
   const metrics: DashboardData['metrics'] = [
     { label: 'Open Positions', value: openPositions, change: 2, trend: 'up' },
     { label: 'Active Candidates', value: totalCandidates, change: 12, trend: 'up' },
+    { label: 'Pending Offer Approvals', value: pendingApproval, change: 0, trend: 'up' },
+    { label: 'Offers Issued', value: issuedOffers, change: 0, trend: 'up' },
+    { label: 'Offer Acceptance Rate', value: `${acceptanceRate}%`, change: 0, trend: 'up' },
+    { label: 'Offers Expiring (7d)', value: expiringSoonCount, change: 0, trend: 'up' },
     { label: 'Avg. Time to Hire', value: '23 days', change: -8, trend: 'up' },
-    { label: 'Offer Conversion', value: `${Math.round((candidatesByStage.offer / Math.max(1, totalCandidates)) * 100)}%`, change: 5, trend: 'up' },
-    { label: 'Pipeline Health', value: '92%', change: 3, trend: 'up' },
     { label: 'Candidates Hired (YTD)', value: hired, change: 4, trend: 'up' },
   ]
 

@@ -36,6 +36,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { getCandidateDetailAction, type CandidateDetail, type MatchAnalysisBlock } from '../actions'
+import { OfferSection } from '@/features/offers/components/offer-section'
 import { cn } from '@/lib/utils'
 
 const STAGE_ORDER = ['applied', 'screening', 'interview', 'offer', 'hired'] as const
@@ -202,6 +203,9 @@ export function CandidateProfileView({ id }: { id: string }) {
             hasEvaluation={candidate.latestInterview?.hasEvaluation ?? false}
             stage={candidate.stage}
           />
+
+          {/* Sprint 10: Offer section */}
+          <OfferSection candidateId={candidate.id} />
 
           {/* Profile summary */}
           {candidate.summary && (

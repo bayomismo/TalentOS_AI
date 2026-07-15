@@ -12,6 +12,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import {
   ArrowLeftIcon,
+  BriefcaseIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   ClockIcon,
@@ -557,6 +558,16 @@ function CandidateRow({
                 <span className="ml-1">Reject</span>
               </Button>
             </>
+          )}
+          {c.finalDecision?.decision === 'SELECTED' && (
+            <Button
+              size="sm"
+              variant="default"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => { window.location.href = `/candidates/${c.id}/offer` }}
+            >
+              <BriefcaseIcon className="mr-1 h-4 w-4" /> Create Offer
+            </Button>
           )}
         </div>
       </div>

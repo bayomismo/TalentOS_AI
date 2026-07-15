@@ -46,6 +46,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'ai.generate_job_description', 'ai.analyze_candidate', 'ai.generate_interview_kit', 'ai.generate_decision_brief',
     'interview.view', 'interview.create', 'interview.schedule', 'interview.evaluate',
     'decision.view', 'decision.compare', 'decision.record',
+    'offer.view', 'offer.view_compensation', 'offer.create', 'offer.edit', 'offer.submit_for_approval', 'offer.approve', 'offer.issue', 'offer.record_response', 'offer.withdraw',
     'reports.view',
     'settings.view', 'settings.manage',
     'audit.view',
@@ -61,12 +62,16 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'ai.generate_job_description', 'ai.analyze_candidate', 'ai.generate_interview_kit', 'ai.generate_decision_brief',
     'interview.view', 'interview.create', 'interview.schedule', 'interview.evaluate',
     'decision.view', 'decision.compare', 'decision.record',
+    'offer.view', 'offer.view_compensation', 'offer.create', 'offer.edit', 'offer.submit_for_approval', 'offer.approve', 'offer.issue', 'offer.record_response', 'offer.withdraw',
     'reports.view',
     'settings.view',
     'audit.view',
   ]),
 
   // RECRUITER: hands-on hiring. Cannot manage org security settings.
+  // Can create + edit + submit offers for approval, issue them, record
+  // responses, and withdraw. CANNOT approve their own offer (enforced
+  // at the action layer).
   RECRUITER: new Set<Permission>([
     'team.view',
     'hiring_request.view', 'hiring_request.create', 'hiring_request.edit', 'hiring_request.close',
@@ -75,13 +80,15 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'ai.generate_job_description', 'ai.analyze_candidate', 'ai.generate_interview_kit', 'ai.generate_decision_brief',
     'interview.view', 'interview.create', 'interview.schedule',
     'decision.view', 'decision.compare',
+    'offer.view', 'offer.view_compensation', 'offer.create', 'offer.edit', 'offer.submit_for_approval', 'offer.issue', 'offer.record_response', 'offer.withdraw',
     'reports.view',
     'settings.view',
   ]),
 
   // HIRING_MANAGER: views relevant HRs/candidates, participates in
-  // comparison, records human decisions where authorized. Cannot manage
-  // unrelated organization settings.
+  // comparison, records human decisions where authorized. Can view offers
+  // and approve them (for HRs they manage). Resource-level scope enforced
+  // at the action layer.
   HIRING_MANAGER: new Set<Permission>([
     'team.view',
     'hiring_request.view', 'hiring_request.edit', // can edit HRs they're a manager of
@@ -89,6 +96,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'cv.view',
     'interview.view', 'interview.schedule',
     'decision.view', 'decision.compare', 'decision.record',
+    'offer.view', 'offer.view_compensation', 'offer.approve', 'offer.record_response',
     'reports.view',
     'settings.view',
   ]),
@@ -101,13 +109,15 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     'interview.evaluate', // only own evaluation on assigned interview
   ]),
 
-  // VIEWER: read-only. No mutations anywhere.
+  // VIEWER: read-only. No mutations anywhere. May see offer existence +
+  // status but NEVER compensation (enforced at the projection layer).
   VIEWER: new Set<Permission>([
     'hiring_request.view',
     'candidate.view',
     'cv.view',
     'interview.view',
     'decision.view',
+    'offer.view',
     'reports.view',
   ]),
 

@@ -53,6 +53,16 @@ import {
   type DecisionBriefOutput,
 } from '../schemas/decision-brief.schema'
 import {
+  buildOfferLetterSystemPrompt,
+  buildOfferLetterUserPrompt,
+  offerLetterPrompt,
+  type OfferLetterPromptFacts,
+} from '../prompts/offer-letter'
+import {
+  offerLetterOutputSchema,
+  type OfferLetterOutput,
+} from '../schemas/offer-letter.schema'
+import {
   AIEngineError,
   NotImplementedError,
   SchemaValidationError,
@@ -70,7 +80,6 @@ export class AIEngine {
   constructor(provider?: AIProvider) {
     this.provider = provider ?? getAIProvider()
   }
-
   /** Exposes the underlying provider for advanced callers (e.g. health route). */
   getProvider(): AIProvider {
     return this.provider
@@ -141,16 +150,31 @@ export class AIEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Not yet implemented — fail loudly so callers know to wait
+  // Sprint 10 — AI Offer Letter Drafting
   // ---------------------------------------------------------------------------
 
-  generateOfferLetter(_input: {
-    candidateName: string
-    role: string
-    salary: string
-    startDate: string
-  }): Promise<never> {
-    return Promise.reject(new NotImplementedError('generateOfferLetter'))
+  /**
+   * Generates a structured offer-letter draft from human-supplied facts.
+   *
+   * Hard guardrails (enforced by the prompt and verified by tests):
+   *   - Uses ONLY the supplied facts. Compensation values are
+   *     reproduced verbatim.
+   *   - Does NOT mention CV score / interview score / AI recommendation
+   *     / Decision Brief.
+   *   - Does NOT introduce protected characteristics.
+   *   - Does NOT promise employment guarantees.
+   *
+   * Implementation note: the offer-letter schema is shallow (10 string
+   * fields + disclaimers) so the provider's `responseJsonSchema` /
+   * `responseMimeType=application/json` + Zod parse + corrective-retry
+   * pattern works without falling back to manual JSON parsing.
+   */
+  async generateOfferLetter(
+    facts: OfferLetterPromptFacts
+  ): Promise<ProviderResult<OfferLetterOutput>> {
+    const systemPrompt = buildOfferLetterSystemPrompt()
+    const userPrompt = buildOfferLetterUserPrompt(facts)
+    return this.callOfferLetter(systemPrompt, userPrompt)
   }
 
   // ---------------------------------------------------------------------------
@@ -174,6 +198,64 @@ export class AIEngine {
     return this.callDecisionBrief(userPrompt)
   }
 
+  // ---------------------------------------------------------------------------
+  // Sprint 10 — AI Offer Letter call helper
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Calls the provider with structured JSON output for the offer
+   * letter, Zod-validates, and retries once with a corrective
+   * message on failure. Mirrors callDecisionBrief because both
+   * use application/json + manual parse.
+   */
+  private async callOfferLetter(
+    systemPrompt: string,
+    userPrompt: string
+  ): Promise<ProviderResult<OfferLetterOutput>> {
+    const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
+
+    const lastError: { value: unknown } = { value: null }
+    const maxAttempts = 2
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const promptToUse =
+        attempt === 1
+          ? fullPrompt
+          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+
+      try {
+        const result = await this.provider.generate(promptToUse, {
+          responseMimeType: 'application/json',
+          temperature: 0.3,
+        })
+        let rawText = (result.data as string).trim()
+        rawText = rawText
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim()
+        let parsedJson: unknown
+        try {
+          parsedJson = JSON.parse(rawText)
+        } catch (jsonErr) {
+          lastError.value = jsonErr
+          continue
+        }
+        const parsed = offerLetterOutputSchema.safeParse(parsedJson)
+        if (parsed.success) {
+          return { ...result, data: parsed.data }
+        }
+        lastError.value = parsed.error
+      } catch (err) {
+        if (err instanceof AIEngineError) throw err
+        lastError.value = err
+      }
+    }
+
+    throw new SchemaValidationError(
+      offerLetterPrompt.id,
+      serializeZodError(lastError.value),
+    )
+  }
 
 
   async health(): Promise<ProviderHealth> {

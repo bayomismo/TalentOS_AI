@@ -38,6 +38,7 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
+import { HROffersSummary } from '@/features/offers/components/hr-offers-summary'
 import { getEventBus } from '@/lib/events'
 import {
   getCandidateWorkspaceAction,
@@ -470,6 +471,9 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
           accent={data.stats.averageMatchScore != null ? 'amber' : undefined}
         />
       </div>
+
+      {/* Sprint 10: Offers summary */}
+      <HROffersSummary hiringRequestId={data.hiringRequest.id} />
 
       {/* Job description summary */}
       {jd ? (

@@ -58,6 +58,17 @@ export const PERMISSIONS = [
   'decision.compare',
   'decision.record',
 
+  // Offers (Sprint 10)
+  'offer.view',
+  'offer.view_compensation',
+  'offer.create',
+  'offer.edit',
+  'offer.submit_for_approval',
+  'offer.approve',
+  'offer.issue',
+  'offer.record_response',
+  'offer.withdraw',
+
   // Reports
   'reports.view',
 
@@ -101,6 +112,18 @@ export type AuditAction =
   | 'AI_JOB_DESCRIPTION_GENERATED'
   | 'AI_INTERVIEW_KIT_GENERATED'
   | 'AI_DECISION_BRIEF_GENERATED'
+  | 'OFFER_CREATED'
+  | 'OFFER_EDITED'
+  | 'OFFER_DRAFT_GENERATED'
+  | 'OFFER_SUBMITTED_FOR_APPROVAL'
+  | 'OFFER_RETURNED_FOR_CHANGES'
+  | 'OFFER_APPROVED'
+  | 'OFFER_SELF_APPROVED_BY_ADMIN'
+  | 'OFFER_ISSUED'
+  | 'OFFER_ACCEPTED'
+  | 'OFFER_DECLINED'
+  | 'OFFER_WITHDRAWN'
+  | 'OFFER_EXPIRED'
 
 /** Resolved authenticated context. The session is JWT-backed; the
  * `passwordChangedAt` and `disabledAt` fields are re-read on every request
