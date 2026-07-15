@@ -181,13 +181,22 @@ async function handleActionRequest(
   args: AskCopilotArgs,
   start: number,
 ): Promise<AskCopilotResult> {
+  console.log('[copilot] handleActionRequest actionId=', actionId)
   const action = getActionById(actionId)
   if (!action) {
+    console.error('[copilot] action not found in registry:', actionId)
     return { ok: false, outcome: { kind: 'error', message: 'Action not found in the whitelist.' } }
   }
+  console.log('[copilot] action found, extracting arguments')
 
   // Ask the model to extract the action arguments
-  const argExtraction = await extractActionArguments(ctx, actionId, args.userMessage, args.history)
+  let argExtraction
+  try {
+    argExtraction = await extractActionArguments(ctx, actionId, args.userMessage, args.history)
+  } catch (err) {
+    console.error('[copilot] extractActionArguments threw:', err instanceof Error ? err.stack : err)
+    return { ok: false, outcome: { kind: 'error', message: 'AI extraction failed. Please try rephrasing your request.' } }
+  }
   if (!argExtraction.ok) {
     return { ok: false, outcome: { kind: 'error', message: argExtraction.message } }
   }
@@ -431,9 +440,12 @@ Do not wrap in markdown. Emit JSON only.`
   // fabricate arguments. Return a clear "extraction failed" outcome so the
   // user can retry. PART 4: this is NOT a business mutation, so it's safe.
   try {
+    console.log('[copilot] extractActionArguments calling engine.callCopilotRouter')
     const engine = getAIEngine()
     const result = await engine.callCopilotRouter(systemPrompt, userPrompt)
+    console.log('[copilot] extractActionArguments got result, type=', typeof result.data)
     const raw = (result.data as string).trim()
+    console.log('[copilot] extractActionArguments raw.length=', raw.length, ' first 200=', raw.slice(0, 200))
     const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
     const parsed = JSON.parse(jsonText) as { arguments?: Record<string, unknown> }
     const args = parsed.arguments ?? {}
@@ -444,10 +456,9 @@ Do not wrap in markdown. Emit JSON only.`
     }
     return { ok: true, arguments: filtered }
   } catch (err) {
-    // PART 25: do not let the model crash the UI. Return a clear outcome
-    // so the user knows the AI is having trouble.
     const reason = err instanceof Error ? err.message : 'unknown'
-    console.error('[copilot] extractActionArguments failed:', reason)
+    const stack = err instanceof Error ? err.stack : ''
+    console.error('[copilot] extractActionArguments FAILED:', reason, stack)
     return { ok: false, message: 'I could not interpret your request. Please rephrase it with the specific details (e.g. title, department, candidate name).' }
   }
 }
