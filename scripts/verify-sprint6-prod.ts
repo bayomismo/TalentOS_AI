@@ -11,6 +11,7 @@
  *  7. Open the candidate detail page — AI analysis block is visible
  */
 import { chromium, type Browser, type Page } from 'playwright'
+import 'dotenv/config'
 import { db } from '../lib/db'
 
 const PRODUCTION_URL = 'https://talentos-ai-lime.vercel.app'
@@ -49,7 +50,10 @@ async function main() {
 
   const beforeCandidates = await db.candidate.count({ where: { hiringRequestId: hrId } })
 
-  const browser: Browser = await chromium.launch({ headless: true })
+  const browser: Browser = await chromium.launch({
+    headless: true,
+    executablePath: '/root/.cache/ms-playwright/chromium-1223/chrome-linux/chrome',
+  })
   const ctx = await browser.newContext()
   const page: Page = await ctx.newPage()
   page.on('pageerror', e => errors.push(`pageerror: ${e.message}`))
