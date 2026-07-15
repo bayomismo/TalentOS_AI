@@ -109,9 +109,15 @@ async function loginViaApi(email: string, password: string): Promise<{ ok: boole
     body: form,
     redirect: 'manual',
   })
-  // Auth.js returns 302 on success
-  if (resp.status === 302 || resp.status === 200) {
-    const setCookie = resp.headers.get('set-cookie') ?? ''
+  // Auth.js returns 302 on both success AND failure. A success sets
+  // a __Secure-authjs.session-token cookie AND the location is
+  // /dashboard (or the callbackUrl). A failure redirects to /login
+  // with ?error=... and no session cookie.
+  const setCookie = resp.headers.get('set-cookie') ?? ''
+  const hasSessionCookie = /authjs\.session-token=/.test(setCookie)
+  const location = resp.headers.get('location') ?? ''
+  const isSuccess = hasSessionCookie && !location.includes('/login')
+  if (isSuccess) {
     const m = setCookie.match(/authjs\.session-token=([^;]+)/)
     return { ok: true, cookie: m ? m[1] : null }
   }
@@ -124,6 +130,8 @@ async function checkPasswordAuthenticates(email: string, password: string): Prom
 }
 
 async function main() {
+  
+
   console.log(`=== Sprint 9.1 — production E2E for Change Password ===`)
   console.log(`URL: ${PRODUCTION_URL}`)
   console.log(`Test user: ${TEST_EMAIL}`)
@@ -315,3 +323,5 @@ async function main() {
   await db.$disconnect()
   process.exit(fails > 0 ? 1 : 0)
 }
+
+main().catch(e => { console.error(e); db.$disconnect().finally(() => process.exit(1)) })

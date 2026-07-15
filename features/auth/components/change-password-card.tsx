@@ -162,11 +162,11 @@ export function ChangePasswordCard() {
       if (code === 'INCORRECT_CURRENT_PASSWORD') {
         setFieldErrors({ current: 'Current password is incorrect.' })
       } else if (code === 'WEAK_NEW_PASSWORD') {
-        setFieldErrors({ next: 'Password does not meet the requirements.' })
+        setFieldErrors({ next: 'Your new password does not meet the password requirements.' })
       } else if (code === 'CONFIRMATION_MISMATCH') {
-        setFieldErrors({ confirm: 'Confirmation does not match the new password.' })
+        setFieldErrors({ confirm: 'New password and confirmation do not match.' })
       } else if (code === 'SAME_PASSWORD') {
-        setFieldErrors({ next: 'New password must be different from current.' })
+        setFieldErrors({ next: 'Your new password must be different from your current password.' })
       }
     })
   }
