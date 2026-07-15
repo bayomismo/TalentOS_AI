@@ -207,7 +207,24 @@ async function handleActionRequest(
     return { ok: false, outcome: { kind: 'error', message: 'Could not validate the AI\'s argument extraction. Please try rephrasing.' } }
   }
   if (!inputParse.success) {
-    console.log('[copilot] inputParse failed, issues=', JSON.stringify(inputParse.error.issues).slice(0, 500))
+    // Debug: write a debug audit row so we can inspect from the DB
+    try {
+      await db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.userId,
+          action: 'COPILOT_ACTION_FAILED' as never,
+          targetType: 'copilot_debug',
+          targetId: actionId,
+          outcome: 'denied',
+          reason: 'input_parse_failed',
+          metadata: {
+            args: argExtraction.arguments,
+            issues: inputParse.error.issues as any,
+          } as any,
+        },
+      })
+    } catch {}
     // PART 6: ask the user to clarify missing fields rather than invent.
     // Use the Zod error's path to get the exact missing field names.
     // Zod 4 issues have: code='invalid_type', expected=<type>, message='...received undefined'.
@@ -225,7 +242,6 @@ async function handleActionRequest(
       // Fall back to scanning the schema
       missing.push(...extractMissingFields(action.inputSchema, argExtraction.arguments))
     }
-    console.log('[copilot] detected missing fields:', missing)
     const question = buildClarificationQuestion(actionId, missing, argExtraction.arguments)
     return {
       ok: true,
