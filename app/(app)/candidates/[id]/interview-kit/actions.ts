@@ -1123,6 +1123,3 @@ export async function getInterviewCenterAction(): Promise<ActionResult<Interview
     }
   }
 }
-
-// Re-export the kit view type for components
-export type { InterviewKitOutput as GeneratedInterviewKit }
