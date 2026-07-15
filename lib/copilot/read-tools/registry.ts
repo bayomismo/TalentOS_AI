@@ -12,7 +12,7 @@
  * read-only tool executors.
  */
 
-import { getOpenHiringRequestsTool, getHiringRequestSummaryTool, getDepartmentHiringSummaryTool } from './tools/hiring-request-tools'
+import { getOpenHiringRequestsTool, getHiringRequestSummaryTool, getDepartmentHiringSummaryTool } from './hiring-request-tools'
 import {
   getCandidatesByStageTool,
   getCandidatesAwaitingInterviewTool,
@@ -20,16 +20,16 @@ import {
   getCandidateSummaryTool,
   getDecisionReadinessTool,
   getSelectedCandidatesWithoutOfferTool,
-} from './tools/candidate-tools'
-import { getUpcomingInterviewsTool, getMyUpcomingInterviewsTool, getMyPendingEvaluationsTool } from './tools/interview-tools'
-import { getOffersByStatusTool, getOffersPendingApprovalTool, getOffersExpiringSoonTool } from './tools/offer-tools'
-import { getMyAttentionItemsTool } from './tools/attention-tools'
+} from './candidate-tools'
+import { getUpcomingInterviewsTool, getMyUpcomingInterviewsTool, getMyPendingEvaluationsTool } from './interview-tools'
+import { getOffersByStatusTool, getOffersPendingApprovalTool, getOffersExpiringSoonTool } from './offer-tools'
+import { getMyAttentionItemsTool } from './attention-tools'
 import {
   getHiringPipelineSummaryTool,
   getRecentHiringActivityTool,
   getHiringRequestsWithNoCandidatesTool,
-} from './tools/summary-tools'
-import type { CopilotAuthContext, CopilotTool } from './types'
+} from './summary-tools'
+import type { CopilotAuthContext, CopilotTool } from '../types'
 
 // ---------------------------------------------------------------------------
 // Forbidden-token scan: reject any tool whose executor references

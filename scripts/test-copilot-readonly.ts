@@ -10,7 +10,7 @@
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 
-const TOOL_DIR = join(__dirname, '..', 'lib', 'copilot', 'tools')
+const TOOL_DIR = join(__dirname, '..', 'lib', 'copilot', 'read-tools')
 
 const FORBIDDEN = [
   'prisma.user.create',
@@ -107,10 +107,10 @@ for (const f of toolFiles) {
 
 // 3. Orchestrator / registry / intent / response must not perform business mutations
 console.log('\n[3] Orchestrator/registry/intent/response read-only:')
-const orchestratorSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'orchestrator.ts'), 'utf8')
-const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'registry.ts'), 'utf8')
-const intentSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'intent.ts'), 'utf8')
-const responseSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'response.ts'), 'utf8')
+const orchestratorSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'orchestration', 'orchestrator.ts'), 'utf8')
+const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'read-tools', 'registry.ts'), 'utf8')
+const intentSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'intent', 'guard.ts'), 'utf8')
+const responseSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'orchestration', 'response.ts'), 'utf8')
 
 for (const [name, src] of [
   ['orchestrator', orchestratorSrc],

@@ -54,7 +54,7 @@ async function main() {
   console.log('=== Sprint 11 -- Copilot Prompt Injection ===\n')
 
   // Confirm the source has the same patterns
-  const intentSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'intent.ts'), 'utf8')
+  const intentSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'intent', 'guard.ts'), 'utf8')
   ok('Intent source has BLOCKED_PATTERNS array', intentSrc.includes('BLOCKED_PATTERNS'))
   ok('Intent source has isPromptInjection()', intentSrc.includes('isPromptInjection'))
   ok('Intent source blocks "all salaries"', intentSrc.includes('all salaries'))

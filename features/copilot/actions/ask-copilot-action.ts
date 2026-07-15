@@ -1,15 +1,25 @@
 'use server'
 
 /**
- * Sprint 11 — Copilot server action.
+ * Sprint 11.1 — Copilot server actions.
  *
- * Thin wrapper over the orchestrator. Adds RBAC and audit logging.
+ * Thin wrappers over the orchestrator. Adds RBAC and audit logging.
  * Never returns raw tool data; only the response generator's
  * structured output.
+ *
+ * Two new actions are added to the existing askCopilotAction:
+ *   - executeCopilotActionAction: confirm a prepared action
+ *   - cancelCopilotActionAction: cancel a PENDING confirmation
  */
 
 import 'server-only'
-import { askCopilot, type AskCopilotResult } from '@/lib/copilot/orchestrator'
+import {
+  askCopilot as orchestratorAsk,
+  executeCopilotAction as orchestratorExecute,
+  cancelCopilotAction as orchestratorCancel,
+  type AskCopilotResult,
+  type ExecuteCopilotActionResult,
+} from '@/lib/copilot/orchestration/orchestrator'
 import { db } from '@/lib/db'
 import type { ActionResult } from '@/lib/auth/action-helpers'
 
@@ -27,14 +37,49 @@ export async function askCopilotAction(input: CopilotActionInput): Promise<Actio
   if (input.message.length > 4000) {
     return { ok: false, error: { code: 'MESSAGE_TOO_LONG', message: 'Message is too long (max 4000 chars).' } }
   }
-  // Bound history to last 10 messages
   const history = (input.history ?? []).slice(-10)
 
   try {
-    const result = await askCopilot({ userMessage: input.message.trim(), history })
+    const result = await orchestratorAsk({ userMessage: input.message.trim(), history })
     return { ok: true, data: result }
   } catch (err) {
     return { ok: false, error: { code: 'INTERNAL', message: 'TalentOS AI is temporarily unavailable.' } }
+  }
+}
+
+export interface ExecuteCopilotActionInput {
+  confirmationId: string
+}
+
+export async function executeCopilotActionAction(
+  input: ExecuteCopilotActionInput,
+): Promise<ActionResult<ExecuteCopilotActionResult>> {
+  if (typeof input?.confirmationId !== 'string' || input.confirmationId.length === 0) {
+    return { ok: false, error: { code: 'MISSING_CONFIRMATION', message: 'confirmationId is required.' } }
+  }
+  try {
+    const result = await orchestratorExecute({ confirmationId: input.confirmationId })
+    return { ok: true, data: result }
+  } catch (err) {
+    return { ok: false, error: { code: 'INTERNAL', message: 'Action execution failed.' } }
+  }
+}
+
+export interface CancelCopilotActionInput {
+  confirmationId: string
+}
+
+export async function cancelCopilotActionAction(
+  input: CancelCopilotActionInput,
+): Promise<ActionResult<{ ok: boolean; reason?: string }>> {
+  if (typeof input?.confirmationId !== 'string' || input.confirmationId.length === 0) {
+    return { ok: false, error: { code: 'MISSING_CONFIRMATION', message: 'confirmationId is required.' } }
+  }
+  try {
+    const result = await orchestratorCancel({ confirmationId: input.confirmationId })
+    return { ok: true, data: result }
+  } catch (err) {
+    return { ok: false, error: { code: 'INTERNAL', message: 'Action cancellation failed.' } }
   }
 }
 
@@ -55,17 +100,12 @@ export async function getRecentCopilotHistoryAction(limit: number = 20): Promise
     where: { organizationId: auth.data.organizationId, type: 'COPILOT_QUERY' as never, createdById: auth.data.userId },
     orderBy: { createdAt: 'desc' },
     take: limit,
-    include: {
-      organization: false,
-    },
   })
-  // Get the conversations in chronological order
   const taskIds = tasks.map(t => t.id)
   const conversations = await db.aIConversation.findMany({
     where: { taskId: { in: taskIds } },
     orderBy: { createdAt: 'asc' },
   })
-  // Map to UI shape
   const out = conversations.map(c => {
     let content = c.content
     if (c.role === 'ASSISTANT') {

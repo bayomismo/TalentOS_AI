@@ -265,6 +265,24 @@ enum AITaskType {
   COPILOT_QUERY
 }
 
+/// Sprint 11.1 — server-controlled confirmation record that gates every
+/// AI-proposed mutation. The browser never sends the final authoritative
+/// mutation payload — the server reconstructs it from this row.
+enum CopilotActionStatus {
+  PENDING
+  EXECUTED
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
+/// Sprint 11.1 — the 3 allowed Copilot actions. Hard-coded whitelist.
+enum CopilotActionType {
+  CREATE_HIRING_REQUEST_DRAFT
+  SCHEDULE_INTERVIEW
+  CREATE_OFFER_DRAFT
+}
+
 enum AITaskStatus {
   PENDING
   RUNNING
@@ -328,6 +346,7 @@ model Organization {
   interviews         Interview[]
   invitations        Invitation[]
   auditLogs          AuditLog[]
+  copilotConfirmations CopilotActionConfirmation[]
 
   @@index([slug])
 }
@@ -397,6 +416,7 @@ model User {
   auditLogs               AuditLog[]             @relation("AuditLogActor")
   authSessions            AuthSession[]
   offersCreated           Offer[]                @relation("OfferCreator")
+  copilotConfirmations    CopilotActionConfirmation[]
   offersApproved          Offer[]                @relation("OfferApprover")
   offersIssued            Offer[]                @relation("OfferIssuer")
 
@@ -1113,5 +1133,58 @@ model AuthSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([expiresAt])
+}
+
+// -----------------------------------------------------------------------------
+// Sprint 11.1 — Copilot Confirmed AI Actions
+// -----------------------------------------------------------------------------
+//
+// CopilotActionConfirmation is the server-controlled record that gates
+// every AI-proposed mutation. The browser never sends the final
+// authoritative mutation payload — the server reconstructs it from
+// this row at CONFIRM time.
+//
+// Hard rules (PART 5):
+//   * Single-use: status PENDING -> EXECUTED / EXPIRED / CANCELLED / FAILED
+//   * User-bound: userId must match at confirm
+//   * Org-bound: organizationId must match at confirm
+//   * Action-bound: actionId must match at confirm
+//   * Time-limited: expiresAt default 10 minutes
+model CopilotActionConfirmation {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String               @db.Uuid
+  userId              String               @db.Uuid
+  /// The action id from the ActionRegistry, e.g. "CREATE_HIRING_REQUEST_DRAFT".
+  actionId            String
+  /// Strongly-typed action type, mirrors actionId but enforced as enum.
+  actionType          CopilotActionType
+  /// Server-controlled payload: the exact arguments that will be
+  /// re-applied to the domain service at confirm time. The browser
+  /// cannot influence this — it was captured at PREPARE time.
+  payload             Json
+  /// Server-generated preview for the user to review before confirming.
+  preview             Json
+  /// Single-use status: PENDING -> EXECUTED | EXPIRED | CANCELLED | FAILED.
+  status              CopilotActionStatus  @default(PENDING)
+  /// Time-bounded: defaults to 10 minutes from creation.
+  expiresAt           DateTime
+  executedAt          DateTime?
+  cancelledAt         DateTime?
+  failureReason       String?
+  /// Canonical resource id after successful execution (e.g. hiring
+  /// request id, interview id, offer id). Set only on EXECUTED.
+  resultResourceId    String?              @db.Uuid
+  resultResourceType  String?
+  /// Optional link to the conversation that produced this action.
+  conversationId      String?              @db.Uuid
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([userId, createdAt(sort: Desc)])
   @@index([expiresAt])
 }

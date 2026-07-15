@@ -127,6 +127,12 @@ export type AuditAction =
   | 'COPILOT_QUERY_EXECUTED'
   | 'COPILOT_TOOL_BLOCKED'
   | 'COPILOT_PROMPT_INJECTION_BLOCKED'
+  | 'COPILOT_ACTION_PREPARED'
+  | 'COPILOT_ACTION_EXECUTED'
+  | 'COPILOT_ACTION_CANCELLED'
+  | 'COPILOT_ACTION_FAILED'
+  | 'COPILOT_ACTION_DENIED'
+  | 'COPILOT_UNSUPPORTED_ACTION'
 
 /** Resolved authenticated context. The session is JWT-backed; the
  * `passwordChangedAt` and `disabledAt` fields are re-read on every request

@@ -22,13 +22,13 @@ async function main() {
   console.log('=== Sprint 11 -- Copilot RBAC ===\n')
 
   // Parse tool ids + required permissions from the registry source
-  const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'registry.ts'), 'utf8')
+  const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'read-tools', 'registry.ts'), 'utf8')
   const toolNames = Array.from(registrySrc.matchAll(/^  (\w+),?\s*\/\/ (hiring|candidate|interview|offer|attention|summary)/gm)).map(m => m[1])
   // Also catch the ones in the category headers — actually just match all "Tool," and "Tool }" lines
   const toolNamesFromRegistry = Array.from(registrySrc.matchAll(/^  (\w+),?$/gm)).map(m => m[1]).filter(n => n && /Tool$/.test(n))
 
   // Get the per-tool required permissions by reading each tool file
-  const toolsDir = join(__dirname, '..', 'lib', 'copilot', 'tools')
+  const toolsDir = join(__dirname, '..', 'lib', 'copilot', 'read-tools')
   const toolFiles = ['hiring-request-tools.ts', 'candidate-tools.ts', 'interview-tools.ts', 'offer-tools.ts', 'attention-tools.ts', 'summary-tools.ts']
   const toolPerms: Array<{ id: string; perm: string }> = []
   for (const f of toolFiles) {

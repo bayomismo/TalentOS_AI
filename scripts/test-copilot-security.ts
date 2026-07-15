@@ -106,7 +106,7 @@ async function main() {
   console.log('\n[B] Compensation privacy: VIEWER does not receive salary fields')
 
   // Static check: get_offers_by_status executor must check offer.view_compensation before returning salary
-  const offerToolsSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'tools', 'offer-tools.ts'), 'utf8')
+  const offerToolsSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'read-tools', 'offer-tools.ts'), 'utf8')
   ok('get_offers_by_status has compensation check', offerToolsSrc.includes('view_compensation') && offerToolsSrc.includes('includeComp'))
   ok('get_offers_by_status returns salaryAmount only when permitted', offerToolsSrc.includes('salaryAmount') && offerToolsSrc.includes('includeComp'))
   ok('get_offers_by_status returns salaryCurrency only when permitted', offerToolsSrc.includes('salaryCurrency'))
@@ -134,7 +134,7 @@ async function main() {
   // [C] Tool execution: permission denial returns ACCESS_DENIED
   // ============================================================
   console.log('\n[C] Tool permission denial: ACCESS_DENIED on missing permission')
-  const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'registry.ts'), 'utf8')
+  const registrySrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'read-tools', 'registry.ts'), 'utf8')
   ok('executeTool returns ACCESS_DENIED code', registrySrc.includes('ACCESS_DENIED'))
   ok('executeTool checks hasPermission', registrySrc.includes('hasPermission'))
   ok('executeTool returns UNKNOWN_TOOL for bad id', registrySrc.includes('UNKNOWN_TOOL'))
@@ -147,7 +147,7 @@ async function main() {
   console.log('\n[D] Every tool is tenant-scoped:')
   const toolFiles = ['hiring-request-tools.ts', 'candidate-tools.ts', 'interview-tools.ts', 'offer-tools.ts', 'attention-tools.ts', 'summary-tools.ts']
   for (const f of toolFiles) {
-    const src = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'tools', f), 'utf8')
+    const src = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'read-tools', f), 'utf8')
     ok(`${f} filters queries by organizationId`, src.includes('organizationId'))
   }
 
@@ -155,7 +155,7 @@ async function main() {
   // [E] No business mutations in the orchestrator
   // ============================================================
   console.log('\n[E] Orchestrator never performs business mutations:')
-  const orchestratorSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'orchestrator.ts'), 'utf8')
+  const orchestratorSrc = readFileSync(join(__dirname, '..', 'lib', 'copilot', 'orchestration', 'orchestrator.ts'), 'utf8')
   // Strip strings to avoid false positives
   const strip = (s: string) => s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '""')
   const code = strip(orchestratorSrc)
@@ -163,7 +163,7 @@ async function main() {
   for (const f of forbidden) {
     ok(`Orchestrator has no "${f}"`, !code.includes(f))
   }
-  ok('Orchestrator only creates AITask / AIConversation (session log)', orchestratorSrc.includes('aITask.create') && orchestratorSrc.includes('aIConversation.create'))
+  ok('Orchestrator routes createConfirmation through the ActionRegistry (no direct mutation path)', orchestratorSrc.includes('action.prepare') || orchestratorSrc.includes('action.execute'))
 
   console.log(`\nResult: ${pass} pass, ${fail} fail\n`)
   if (fail > 0) {
