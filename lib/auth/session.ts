@@ -140,3 +140,165 @@ export async function changePassword(input: {
     metadata: { reason: input.reason },
   })
 }
+
+/**
+ * Sprint 9.1 — full self-service password change for the currently
+ * authenticated user. Performs current-password verification, new-password
+ * validation, confirmation match, same-as-current check, hashing,
+ * atomic persistence + session revocation, and audit logging.
+ *
+ * The caller is expected to have already resolved the authenticated user
+ * (via `requireAuth()` in a server action, or directly in a script). The
+ * target user is ALWAYS the one passed in `ctx.userId` — never a value
+ * from the request body.
+ */
+export interface PerformPasswordChangeInput {
+  ctx: { userId: string; organizationId: string }
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+  validate: (plain: string) => { ok: true } | { ok: false; reason: string }
+  compare: (plain: string, hash: string) => Promise<boolean>
+  hash: (plain: string) => Promise<string>
+}
+
+export type PerformPasswordChangeResult =
+  | { ok: true; data: { requireRelogin: true; changedAt: string } }
+  | {
+      ok: false
+      code:
+        | 'MISSING_FIELDS'
+        | 'USER_NOT_FOUND'
+        | 'USER_DISABLED'
+        | 'INCORRECT_CURRENT_PASSWORD'
+        | 'WEAK_NEW_PASSWORD'
+        | 'CONFIRMATION_MISMATCH'
+        | 'SAME_PASSWORD'
+        | 'INTERNAL'
+      message: string
+    }
+
+export async function performPasswordChange(
+  input: PerformPasswordChangeInput,
+): Promise<PerformPasswordChangeResult> {
+  // 1. Input shape guard
+  if (
+    typeof input.currentPassword !== 'string' ||
+    typeof input.newPassword !== 'string' ||
+    typeof input.confirmPassword !== 'string' ||
+    input.currentPassword.length === 0 ||
+    input.newPassword.length === 0 ||
+    input.confirmPassword.length === 0
+  ) {
+    return { ok: false, code: 'MISSING_FIELDS', message: 'All password fields are required.' }
+  }
+
+  // 2. Fetch the user
+  const user = await db.user.findUnique({
+    where: { id: input.ctx.userId },
+    select: {
+      id: true,
+      passwordHash: true,
+      disabledAt: true,
+      organizationId: true,
+    },
+  })
+  if (!user) {
+    return { ok: false, code: 'USER_NOT_FOUND', message: 'Account not found.' }
+  }
+  if (user.disabledAt) {
+    return { ok: false, code: 'USER_DISABLED', message: 'Your account is disabled. Contact your administrator.' }
+  }
+  if (!user.passwordHash) {
+    return {
+      ok: false,
+      code: 'INCORRECT_CURRENT_PASSWORD',
+      message: 'Current password is incorrect.',
+    }
+  }
+
+  // 3. Verify current password
+  const currentOk = await input.compare(input.currentPassword, user.passwordHash)
+  if (!currentOk) {
+    await recordAuditLog({
+      organizationId: input.ctx.organizationId,
+      actorId: input.ctx.userId,
+      action: 'PASSWORD_CHANGED',
+      targetType: 'user',
+      targetId: input.ctx.userId,
+      outcome: 'failure',
+      reason: 'incorrect_current_password',
+      metadata: {},
+    })
+    return { ok: false, code: 'INCORRECT_CURRENT_PASSWORD', message: 'Current password is incorrect.' }
+  }
+
+  // 4. Validate new password
+  const validation = input.validate(input.newPassword)
+  if (!validation.ok) {
+    return {
+      ok: false,
+      code: 'WEAK_NEW_PASSWORD',
+      message: 'Your new password does not meet the password requirements.',
+    }
+  }
+
+  // 5. Confirmation match
+  if (input.newPassword !== input.confirmPassword) {
+    return {
+      ok: false,
+      code: 'CONFIRMATION_MISMATCH',
+      message: 'New password and confirmation do not match.',
+    }
+  }
+
+  // 6. Must differ from current
+  if (input.newPassword === input.currentPassword) {
+    return {
+      ok: false,
+      code: 'SAME_PASSWORD',
+      message: 'Your new password must be different from your current password.',
+    }
+  }
+
+  // 7. Persist atomically
+  const newHash = await input.hash(input.newPassword)
+  try {
+    await changePassword({
+      userId: input.ctx.userId,
+      newPasswordHash: newHash,
+      byUserId: input.ctx.userId,
+      reason: 'user_self',
+    })
+  } catch (err) {
+    await recordAuditLog({
+      organizationId: input.ctx.organizationId,
+      actorId: input.ctx.userId,
+      action: 'PASSWORD_CHANGED',
+      targetType: 'user',
+      targetId: input.ctx.userId,
+      outcome: 'failure',
+      reason: 'persistence_error',
+      metadata: {},
+    }).catch(() => {
+      /* best-effort */
+    })
+    if (process.env.NODE_ENV === 'production') {
+      return {
+        ok: false,
+        code: 'INTERNAL',
+        message: 'We could not change your password. Please try again.',
+      }
+    }
+    return {
+      ok: false,
+      code: 'INTERNAL',
+      message: err instanceof Error ? err.message : 'Internal error',
+    }
+  }
+
+  return {
+    ok: true,
+    data: { requireRelogin: true, changedAt: new Date().toISOString() },
+  }
+}

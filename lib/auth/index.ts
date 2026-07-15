@@ -61,8 +61,10 @@ export {
   revokeSession,
   revokeAllSessionsForUser,
   changePassword,
+  performPasswordChange,
   hashSessionToken,
 } from './session'
+export type { PerformPasswordChangeInput, PerformPasswordChangeResult } from './session'
 
 export type {
   AuthContext,

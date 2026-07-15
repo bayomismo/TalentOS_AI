@@ -21,7 +21,7 @@ export function LoginForm() {
   const search = useSearchParams()
   const callbackUrl = search.get('callbackUrl') ?? '/dashboard'
   const expired = search.get('expired') === '1'
-  const reason = search.get('reason') // 'disabled' | 'password_changed' | null
+  const reason = search.get('reason') // 'disabled' | 'password_changed' | 'password-changed' | null
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -30,8 +30,8 @@ export function LoginForm() {
       ? 'Your session has expired. Please sign in again.'
       : reason === 'disabled'
         ? 'Your account has been disabled. Contact an administrator.'
-        : reason === 'password_changed'
-          ? 'Your password was changed. Please sign in again.'
+        : reason === 'password_changed' || reason === 'password-changed'
+          ? 'Your password was changed. Please sign in again with your new password.'
           : null,
   )
   const [loading, setLoading] = useState(false)

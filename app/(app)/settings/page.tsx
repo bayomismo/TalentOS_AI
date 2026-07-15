@@ -5,6 +5,7 @@ import { BellIcon, BuildingIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon } from
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
+import { ChangePasswordCard } from '@/features/auth/components/change-password-card'
 import { cn } from '@/lib/utils'
 
 const settingsSections = [
@@ -259,6 +260,7 @@ function NotificationsSection() {
 function SecuritySection() {
   return (
     <div className="space-y-6">
+      <ChangePasswordCard />
       <Card>
         <CardHeader>
           <CardTitle>Security</CardTitle>
