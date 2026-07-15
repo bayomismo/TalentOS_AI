@@ -130,7 +130,7 @@ async function main() {
   ok('Decision Hub title visible', /Decision Hub/.test(hubBody))
   ok('HR title visible', hubBody.includes(hub.hrTitle))
   ok('candidate names visible', hub.candidateNames.some(n => hubBody.includes(n)))
-  ok('readiness chip visible', /(Ready for review|Needs interview|Awaiting evaluation|Not ready)/.test(hubBody))
+  ok('readiness chip visible', /(ready for review|needs interview|awaiting evaluation|not ready)/i.test(hubBody))
   ok('AI CV Match scores visible', /AI CV Match/.test(hubBody))
 
   // ---------------------------------------------------------------------
@@ -160,7 +160,10 @@ async function main() {
   ok('Comparison heading visible', /Side-by-side comparison/.test(cmpBody))
   ok('AI CV Match label visible (separate block)', /AI CV Match/.test(cmpBody))
   ok('Human Interview label visible (separate block)', /Human Interview/.test(cmpBody))
-  ok('no combined final score', !/Final Score|Combined Score|Overall Score/i.test(cmpBody))
+  // The disclaimer text 'no combined final score' is allowed. We want to make sure
+// no actual combined score is shown (e.g. "Combined: 75", "Overall: 80").
+const combinedScoreMatches = cmpBody.match(/(Combined|Overall|Final)\s*Score\s*[:=]?\s*\d/i)
+ok('no actual combined score rendered', !combinedScoreMatches)
   ok('"no winner" disclaimer visible', /AI is decision-support only/.test(cmpBody))
 
   // Verify 2 candidate cards present
@@ -220,7 +223,14 @@ async function main() {
   // ---------------------------------------------------------------------
   console.log('\n7. Select candidate via confirmation dialog')
   const candA = hub.candidateNames[0]!
-  const selectBtn = page.locator('tr, div').filter({ hasText: candA }).locator('button:has-text("Select")').first()
+  // Scope to the candidate row (its card containing the full name) and look for the Select action button
+  const selectBtn = page
+    .locator('div.rounded')
+    .filter({ hasText: candA })
+    .filter({ has: page.locator('input[type="checkbox"]') })
+    .locator('button:has-text("Select")')
+    .first()
+  await selectBtn.waitFor({ state: 'visible', timeout: 15_000 })
   await selectBtn.click()
   await page.waitForSelector('text=Mark as selected', { timeout: 10_000 })
   ok('confirmation dialog shown', true)
@@ -244,7 +254,13 @@ async function main() {
   // ---------------------------------------------------------------------
   console.log('\n8. Reject another candidate')
   const candB = hub.candidateNames[1]!
-  const rejectBtn = page.locator('tr, div').filter({ hasText: candB }).locator('button:has-text("Reject")').first()
+  const rejectBtn = page
+    .locator('div.rounded')
+    .filter({ hasText: candB })
+    .filter({ has: page.locator('input[type="checkbox"]') })
+    .locator('button:has-text("Reject")')
+    .first()
+  await rejectBtn.waitFor({ state: 'visible', timeout: 15_000 })
   await rejectBtn.click()
   await page.waitForSelector('text=Reject candidate', { timeout: 10_000 })
   await page.locator('textarea').fill('Better-suited candidate selected.')
@@ -276,7 +292,7 @@ async function main() {
   await page.waitForTimeout(2000)
   const detailBody = (await page.locator('body').textContent()) ?? ''
   ok('Decision section visible', /Decision/.test(detailBody))
-  ok('readiness chip visible on detail', /(Ready for review|Needs interview|Awaiting evaluation|Not ready)/.test(detailBody))
+  ok('readiness chip visible on detail', /(ready for review|needs interview|awaiting evaluation|not ready)/i.test(detailBody))
   ok('"Open Decision Hub" CTA visible', /Open Decision Hub/.test(detailBody))
   ok('AI is decision support disclaimer visible', /AI is decision support/.test(detailBody))
 

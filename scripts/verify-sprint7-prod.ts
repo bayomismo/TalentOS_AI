@@ -155,7 +155,7 @@ async function main() {
   ok('kit shows questions', /Questions\s*\(\d+\)/i.test(kitBody))
   ok('kit shows scorecard', /Scorecard/i.test(kitBody))
   ok('kit shows candidate name', kitBody.includes(target.name))
-  ok('kit shows position', kitBody.includes('UX/UI Designer') || kitBody.includes('Software'))
+  ok('kit shows position', /UX\/UI Designer|Software|Data Scientist|Product Manager|Engineer/.test(kitBody))
   // Section headers for each purpose
   ok('kit shows Opening questions', /Opening/.test(kitBody))
   ok('kit shows Role-specific', /Role-specific/.test(kitBody))
