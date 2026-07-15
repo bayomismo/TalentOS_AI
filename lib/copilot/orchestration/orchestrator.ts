@@ -478,7 +478,22 @@ Do not wrap in markdown. Emit JSON only.`
     const reason = err instanceof Error ? err.message : 'unknown'
     const stack = err instanceof Error ? err.stack : ''
     console.error('[copilot] extractActionArguments FAILED:', reason, stack)
-    return { ok: false, message: 'I could not interpret your request. Please rephrase it with the specific details (e.g. title, department, candidate name).' }
+    // PART 25: write a debug audit row so we can inspect from the DB
+    try {
+      await db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.userId,
+          action: 'COPILOT_ACTION_FAILED' as never,
+          targetType: 'copilot_debug',
+          targetId: actionId,
+          outcome: 'denied',
+          reason: 'extraction_failed',
+          metadata: { reason, stack: (stack ?? '').slice(0, 2000) } as any,
+        },
+      })
+    } catch {}
+    return { ok: false, message: `I could not interpret your request. (reason: ${reason.slice(0, 200)})` }
   }
 }
 
