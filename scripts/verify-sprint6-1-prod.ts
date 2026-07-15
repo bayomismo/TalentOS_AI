@@ -93,12 +93,17 @@ async function main() {
   ok('"Candidates" column header visible', /Candidates/.test(hrText))
   ok('"Analyzed" column header visible', /Analyzed/.test(hrText))
   ok('"Shortlisted" column header visible', /Shortlisted/.test(hrText))
-  // The HR we found should show a non-zero candidate count (it had 4 in seed)
+  // The HR we found should show a non-zero candidate count (it had 4 in seed).
+  // Look at the row's cells in order: title, dept, openings, candidates,
+  // analyzed, shortlisted, status, action. We want cells[3] (candidates) > 0.
   const sarahRow = page.locator('tr', { hasText: hr.title }).first()
-  const sarahRowText = (await sarahRow.textContent()) || ''
+  const sarahRowCells = await sarahRow.locator('td').allTextContents()
+  const candidateCountCell = sarahRowCells[3]?.trim() ?? ''
+  const candidateCount = parseInt(candidateCountCell, 10)
   ok(
     'HR row shows a candidate count > 0',
-    /[1-9]\d?/.test(sarahRowText) && /Candidates/.test(sarahRowText)
+    !Number.isNaN(candidateCount) && candidateCount > 0,
+    `cell[3]="${candidateCountCell}" parsed=${candidateCount} cells=${JSON.stringify(sarahRowCells.slice(0, 8))}`
   )
 
   // ---------------------------------------------------------------------
