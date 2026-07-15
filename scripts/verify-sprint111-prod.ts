@@ -173,7 +173,7 @@ async function ensureSelectedCandidate(userId: string) {
   if (!org) throw new Error('No org')
   let dept = await db.department.findFirst({ where: { organizationId: org.id } })
   if (!dept) {
-    dept = await db.department.create({ data: { organization: { connect: { id: org.id } }, name: 'Sprint111 Dept' } })
+    dept = await db.department.create({ data: { organization: { connect: { id: org.id } }, name: 'Sprint111 Dept', slug: `sprint111-dept-${randomBytes(2).toString('hex')}` } })
   }
   let hr = await db.hiringRequest.findFirst({ where: { organizationId: org.id }, orderBy: { createdAt: 'desc' } })
   if (!hr) {
