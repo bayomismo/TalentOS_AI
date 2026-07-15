@@ -259,6 +259,29 @@ export async function executeCopilotAction(
   }
 
   const result = await action.execute(ctx, args.confirmationId)
+  // Audit
+  if (result.ok) {
+    await recordAuditLog({
+      organizationId: ctx.organizationId,
+      actorId: ctx.userId,
+      action: 'COPILOT_ACTION_EXECUTED',
+      targetType: 'copilot_action',
+      targetId: args.confirmationId,
+      outcome: 'success',
+      metadata: { actionId: confirmation.actionId, resourceType: result.result.resourceType, resourceId: result.result.resourceId },
+    })
+  } else {
+    await recordAuditLog({
+      organizationId: ctx.organizationId,
+      actorId: ctx.userId,
+      action: 'COPILOT_ACTION_FAILED',
+      targetType: 'copilot_action',
+      targetId: args.confirmationId,
+      outcome: 'denied',
+      reason: result.failure.code,
+      metadata: { actionId: confirmation.actionId },
+    })
+  }
   return result
 }
 

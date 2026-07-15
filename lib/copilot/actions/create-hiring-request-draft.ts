@@ -217,6 +217,16 @@ export const createHiringRequestDraftAction: CopilotActionDefinition<Input, Prev
     // Re-check permission (PART 11)
     if (!hasPermission(ctx.role as any, 'hiring_request.create' as any)) {
       await markFailed(confirmationId, 'permission_denied')
+      await recordAuditLog({
+        organizationId: ctx.organizationId,
+        actorId: ctx.userId,
+        action: 'COPILOT_ACTION_FAILED',
+        targetType: 'copilot_action',
+        targetId: confirmationId,
+        outcome: 'denied',
+        reason: 'permission_denied',
+        metadata: { actionId: 'CREATE_HIRING_REQUEST_DRAFT' },
+      })
       return { ok: false, failure: { code: 'PERMISSION_DENIED', message: 'You no longer have permission to create hiring requests.' } }
     }
 

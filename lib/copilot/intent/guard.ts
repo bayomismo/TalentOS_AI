@@ -30,7 +30,7 @@ const BLOCKED_PATTERNS = [
   /\bdecline\b.*\boffer\b/i,
   /\bwithdraw\b.*\boffer\b/i,
   /\breject\b.*\boffer\b/i,
-  /\bcreate\b.*\bhiring request\b/i,
+  /\bdelete\b.*\bhiring request\b/i,
   /\bdelete\b.*\bcandidate\b/i,
   /\bskip confirmation\b/i,
   /\bmark confirmation as approved\b/i,
@@ -41,6 +41,16 @@ const BLOCKED_PATTERNS = [
   /\bdisable user\b/i,
   /\bmodify security\b/i,
   /\bmodify organization\b/i,
+  // Additional Sprint 11.1 defenses
+  /execute the action immediately/i,
+  /call prisma/i,
+  /use execute/i,
+  /select sarah/i,
+  /approve sarah/i,
+  /reject the candidate/i,
+  /reject candidate/i,
+  /select the candidate/i,
+  /change final decision/i,
 ]
 
 export function isPromptInjection(message: string): boolean {

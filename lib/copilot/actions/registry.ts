@@ -91,9 +91,9 @@ export function classifyActionIntent(userMessage: string): {
 
   // Action signals (positive): must be in the whitelist
   const actionSignals: Array<{ id: ActionId; patterns: string[] }> = [
-    { id: 'CREATE_HIRING_REQUEST_DRAFT', patterns: ['create hiring request', 'new hiring request', 'draft a hiring request', 'open a new position', 'create a job', 'new role', 'create a role', 'create role', 'hire for'] },
-    { id: 'SCHEDULE_INTERVIEW', patterns: ['schedule interview', 'schedule an interview', 'set up interview', 'book interview', 'interview next', 'interview on'] },
-    { id: 'CREATE_OFFER_DRAFT', patterns: ['prepare offer', 'prepare an offer', 'create offer', 'create an offer', 'draft offer', 'draft an offer', 'make an offer', 'extend an offer', 'offer draft'] },
+    { id: 'CREATE_HIRING_REQUEST_DRAFT', patterns: ['create a hiring request', 'create hiring request', 'new hiring request', 'draft a hiring request', 'draft hiring request', 'open a new position', 'create a job', 'new role', 'create a role', 'create role', 'hire for', 'create a new'] },
+    { id: 'SCHEDULE_INTERVIEW', patterns: ['schedule an interview', 'schedule interview', 'set up interview', 'book interview', 'interview next', 'interview on', 'schedule a'] },
+    { id: 'CREATE_OFFER_DRAFT', patterns: ['prepare an offer', 'prepare offer', 'create an offer', 'create offer', 'draft an offer', 'draft offer', 'make an offer', 'extend an offer', 'offer draft'] },
   ]
   for (const sig of actionSignals) {
     if (sig.patterns.some(p => lower.includes(p))) {
@@ -103,10 +103,12 @@ export function classifyActionIntent(userMessage: string): {
 
   // Unsupported action signals (negative): the AI must refuse
   const unsupportedSignals = [
-    'approve offer', 'approve the offer', 'issue offer', 'issue the offer',
+    'approve offer', 'approve the offer', 'approve sarah', "approve sarah's",
+    'issue offer', 'issue the offer',
     'accept offer', 'accept the offer', 'decline offer', 'decline the offer',
     'reject offer', 'reject the offer', 'withdraw offer', 'withdraw the offer',
-    'select candidate', 'select the candidate', 'reject candidate', 'reject the candidate',
+    'select candidate', 'select the candidate', 'select sarah',
+    'reject candidate', 'reject the candidate',
     'change final decision', 'change decision', 'submit evaluation', 'submit my evaluation',
     'delete candidate', 'delete the candidate', 'delete hiring request', 'delete the hiring request',
     'delete interview', 'delete offer', 'change user role', 'change role', 'disable user',
