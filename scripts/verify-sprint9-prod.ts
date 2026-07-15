@@ -133,7 +133,7 @@ async function main() {
 
   const browser: Browser = await chromium.launch({
     headless: true,
-    executablePath: '/root/.cache/ms-playwright/chromium-1223/chrome-linux/chrome',
+    // executablePath removed — uses default Playwright-managed binary
   })
 
   // ===========================================================================

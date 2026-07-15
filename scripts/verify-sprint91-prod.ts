@@ -94,8 +94,14 @@ async function loginViaUI(page: Page, email: string, password: string): Promise<
 }
 
 async function loginViaApi(email: string, password: string): Promise<{ ok: boolean; cookie: string | null }> {
-  // Use the Auth.js credentials endpoint (the same path the form posts to)
-  const csrf = await fetch(`${PRODUCTION_URL}/api/auth/csrf`).then(r => r.json()) as { csrfToken: string }
+  // Use the Auth.js credentials endpoint (the same path the form posts to).
+  // Node's fetch does NOT maintain a cookie jar, so we carry the CSRF cookie
+  // manually from the /api/auth/csrf response to the credentials POST.
+  const csrfResp = await fetch(`${PRODUCTION_URL}/api/auth/csrf`)
+  const csrf = (await csrfResp.json()) as { csrfToken: string }
+  const setCookies = csrfResp.headers.getSetCookie?.() ?? []
+  // Find the CSRF cookie (named authjs.csrf-token or __Host-authjs.csrf-token)
+  const csrfCookie = setCookies.find(c => /csrf-token=/.test(c)) ?? ''
   const form = new URLSearchParams({
     csrfToken: csrf.csrfToken,
     email,
@@ -105,7 +111,11 @@ async function loginViaApi(email: string, password: string): Promise<{ ok: boole
   })
   const resp = await fetch(`${PRODUCTION_URL}/api/auth/callback/credentials`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      // Forward the CSRF cookie so Auth.js's CSRF check passes.
+      'Cookie': csrfCookie.split(';')[0] ?? '',
+    },
     body: form,
     redirect: 'manual',
   })
