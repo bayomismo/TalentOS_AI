@@ -164,9 +164,6 @@ export async function askCopilot(args: AskCopilotArgs): Promise<AskCopilotResult
     return await handleActionRequest(ctx, intent.actionId, args, start)
   }
 
-  // Fall through to read query handler
-  return await handleReadQuery(ctx, args, start)
-
   // READ_QUERY: existing Sprint 11 flow
   return await handleReadQuery(ctx, args, start)
 }
@@ -440,14 +437,36 @@ Do not wrap in markdown. Emit JSON only.`
   // fabricate arguments. Return a clear "extraction failed" outcome so the
   // user can retry. PART 4: this is NOT a business mutation, so it's safe.
   try {
-    console.log('[copilot] extractActionArguments calling engine.callCopilotRouter')
     const engine = getAIEngine()
     const result = await engine.callCopilotRouter(systemPrompt, userPrompt)
-    console.log('[copilot] extractActionArguments got result, type=', typeof result.data)
-    const raw = (result.data as string).trim()
-    console.log('[copilot] extractActionArguments raw.length=', raw.length, ' first 200=', raw.slice(0, 200))
+    // The provider may return a string OR a parsed object depending on
+    // the response format. Handle both.
+    let raw: string
+    if (typeof result.data === 'string') {
+      raw = (result.data as string).trim()
+    } else if (result.data && typeof result.data === 'object') {
+      raw = JSON.stringify(result.data)
+    } else {
+      raw = String(result.data ?? '').trim()
+    }
+    if (raw.length === 0) {
+      console.warn('[copilot] extractActionArguments: empty response from model')
+      return { ok: false, message: 'I could not interpret your request. The AI returned an empty response. Please try rephrasing with the specific details.' }
+    }
     const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
-    const parsed = JSON.parse(jsonText) as { arguments?: Record<string, unknown> }
+    let parsed: { arguments?: Record<string, unknown> }
+    try {
+      parsed = JSON.parse(jsonText) as { arguments?: Record<string, unknown> }
+    } catch {
+      // Some models wrap JSON in code fences with a leading language tag
+      const inner = jsonText.replace(/^[a-zA-Z]+\n/, '').trim()
+      try {
+        parsed = JSON.parse(inner) as { arguments?: Record<string, unknown> }
+      } catch {
+        console.warn('[copilot] extractActionArguments: non-JSON response. raw=', raw.slice(0, 200))
+        return { ok: false, message: 'I could not interpret your request. The AI response was not in a format I could parse. Please try rephrasing with the specific details.' }
+      }
+    }
     const args = parsed.arguments ?? {}
     const allowedKeys = getInputKeys(action.inputSchema)
     const filtered: Record<string, unknown> = {}
