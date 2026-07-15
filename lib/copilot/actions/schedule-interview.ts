@@ -32,9 +32,16 @@ import {
 // Input schema
 // ---------------------------------------------------------------------------
 
+function caseInsensitiveEnum<T extends [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(values),
+  )
+}
+
 const InputSchema = z.object({
   candidateReference: z.string().min(1).max(200).describe('Free-text candidate reference resolved server-side (name, email, or id)'),
-  type: z.enum(['PHONE_SCREEN', 'TECHNICAL', 'BEHAVIORAL', 'PANEL', 'ONSITE', 'FINAL', 'CULTURE_FIT', 'CASE_STUDY']).default('TECHNICAL'),
+  type: caseInsensitiveEnum(['PHONE_SCREEN', 'TECHNICAL', 'BEHAVIORAL', 'PANEL', 'ONSITE', 'FINAL', 'CULTURE_FIT', 'CASE_STUDY']).default('TECHNICAL'),
   scheduledAt: z.string().datetime().describe('ISO 8601 timestamp in UTC'),
   durationMinutes: z.number().int().min(15).max(480).default(60),
   interviewerEmails: z.array(z.string().email()).min(1).max(8),

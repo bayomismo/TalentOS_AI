@@ -40,13 +40,20 @@ import {
 // Input schema — what the AI is allowed to produce
 // ---------------------------------------------------------------------------
 
+function caseInsensitiveEnum<T extends [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(values),
+  )
+}
+
 const InputSchema = z.object({
   title: z.string().min(2).max(160),
   departmentName: z.string().min(1).max(80).optional(),
   departmentId: z.string().uuid().optional(),
-  level: z.enum(['ENTRY', 'JUNIOR', 'MID', 'SENIOR', 'STAFF', 'PRINCIPAL']).default('MID'),
-  jobType: z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP', 'TEMPORARY']).default('FULL_TIME'),
-  workArrangement: z.enum(['ONSITE', 'REMOTE', 'HYBRID']).default('ONSITE'),
+  level: caseInsensitiveEnum(['ENTRY', 'JUNIOR', 'MID', 'SENIOR', 'STAFF', 'PRINCIPAL']).default('MID'),
+  jobType: caseInsensitiveEnum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP', 'TEMPORARY']).default('FULL_TIME'),
+  workArrangement: caseInsensitiveEnum(['ONSITE', 'REMOTE', 'HYBRID']).default('ONSITE'),
   openings: z.number().int().min(1).max(50).default(1),
   location: z.string().min(1).max(160).optional(),
   hiringManagerEmail: z.string().email().optional(),
