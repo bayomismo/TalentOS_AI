@@ -1,0 +1,2 @@
+ALTER TABLE "AITask" ADD COLUMN     "metadata" JSONB NOT NULL DEFAULT '{}';
+

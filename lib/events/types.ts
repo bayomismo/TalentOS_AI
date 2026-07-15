@@ -197,6 +197,33 @@ export interface InterviewCompletedSnapshot {
 }
 
 // -----------------------------------------------------------------------------
+// Sprint 8: Decision Hub event payloads
+// -----------------------------------------------------------------------------
+
+export interface DecisionBriefGeneratedSnapshot {
+  taskId: string
+  hiringRequestId: string
+  candidateIds: string[]
+  generatedAt: string
+  modelUsed: string | null
+}
+
+export interface CandidateComparisonCreatedSnapshot {
+  hiringRequestId: string
+  candidateIds: string[]
+  viewedAt: string
+}
+
+export interface CandidateDecisionRecordedSnapshot {
+  decisionId: string
+  candidateId: string
+  hiringRequestId: string
+  decision: 'ADVANCE' | 'HOLD' | 'REJECT' | 'SELECTED'
+  decidedByName: string
+  decidedAt: string
+}
+
+// -----------------------------------------------------------------------------
 // The bus's event union
 // -----------------------------------------------------------------------------
 
@@ -242,6 +269,9 @@ export type TalentOSEvent =
   | { type: 'InterviewStarted'; payload: InterviewStartedSnapshot }
   | { type: 'InterviewEvaluationSubmitted'; payload: InterviewEvaluationSnapshot }
   | { type: 'InterviewCompleted'; payload: InterviewCompletedSnapshot }
+  | { type: 'DecisionBriefGenerated'; payload: DecisionBriefGeneratedSnapshot }
+  | { type: 'CandidateComparisonCreated'; payload: CandidateComparisonCreatedSnapshot }
+  | { type: 'CandidateDecisionRecorded'; payload: CandidateDecisionRecordedSnapshot }
 
 export type TalentOSEventType = TalentOSEvent['type']
 

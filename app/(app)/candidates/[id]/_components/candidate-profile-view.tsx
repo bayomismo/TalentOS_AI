@@ -23,6 +23,7 @@ import {
   MapPinIcon,
   MicIcon,
   PhoneIcon,
+  ScaleIcon,
   SparklesIcon,
   StarIcon,
   ThumbsDownIcon,
@@ -190,6 +191,17 @@ export function CandidateProfileView({ id }: { id: string }) {
               stage={candidate.stage}
             />
           )}
+
+          {/* Sprint 8: Decision Hub entry */}
+          <DecisionSection
+            candidateId={candidate.id}
+            hiringRequestId={candidate.hiringRequestId}
+            matchScore={candidate.matchScore}
+            finalDecision={candidate.finalDecision}
+            hasInterview={candidate.latestInterview !== null}
+            hasEvaluation={candidate.latestInterview?.hasEvaluation ?? false}
+            stage={candidate.stage}
+          />
 
           {/* Profile summary */}
           {candidate.summary && (
@@ -877,6 +889,153 @@ function InterviewCard({ candidateId, latestInterview, counts, stage }: Intervie
         <p className="text-xs text-slate-500 dark:text-slate-400">
           AI is decision support. The human interviewer / hiring manager remains
           responsible for the final call.
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Sprint 8: Decision Hub section
+// -----------------------------------------------------------------------------
+
+interface DecisionSectionProps {
+  candidateId: string
+  hiringRequestId: string
+  matchScore: number | null
+  finalDecision: CandidateDetail['finalDecision']
+  hasInterview: boolean
+  hasEvaluation: boolean
+  stage: CandidateDetail['stage']
+}
+
+type Readiness = 'NOT_READY' | 'NEEDS_INTERVIEW' | 'AWAITING_EVALUATION' | 'READY_FOR_REVIEW'
+
+const READINESS_INFO: Record<Readiness, { label: string; description: string; className: string }> = {
+  NOT_READY: {
+    label: 'Not ready',
+    description: 'Awaiting AI CV analysis.',
+    className: 'bg-slate-100 text-slate-700 border-slate-200',
+  },
+  NEEDS_INTERVIEW: {
+    label: 'Needs interview',
+    description: 'AI analysis complete. Schedule an interview to continue.',
+    className: 'bg-amber-100 text-amber-800 border-amber-200',
+  },
+  AWAITING_EVALUATION: {
+    label: 'Awaiting evaluation',
+    description: 'Interview in progress or completed without a scorecard.',
+    className: 'bg-blue-100 text-blue-800 border-blue-200',
+  },
+  READY_FOR_REVIEW: {
+    label: 'Ready for review',
+    description: 'AI analysis + human interview scorecard both available.',
+    className: 'bg-green-100 text-green-800 border-green-200',
+  },
+}
+
+function computeReadiness(
+  matchScore: number | null,
+  hasInterview: boolean,
+  hasEvaluation: boolean,
+): Readiness {
+  if (matchScore === null) return 'NOT_READY'
+  if (!hasInterview) return 'NEEDS_INTERVIEW'
+  if (!hasEvaluation) return 'AWAITING_EVALUATION'
+  return 'READY_FOR_REVIEW'
+}
+
+function DecisionSection({
+  candidateId,
+  hiringRequestId,
+  matchScore,
+  finalDecision,
+  hasInterview,
+  hasEvaluation,
+  stage,
+}: DecisionSectionProps) {
+  const readiness = computeReadiness(matchScore, hasInterview, hasEvaluation)
+  const info = READINESS_INFO[readiness]
+
+  const decisionBadge: Record<NonNullable<typeof finalDecision>['decision'], { label: string; className: string }> = {
+    SELECTED: { label: 'Selected', className: 'bg-green-100 text-green-800' },
+    REJECT: { label: 'Rejected', className: 'bg-red-100 text-red-800' },
+    HOLD: { label: 'On hold', className: 'bg-yellow-100 text-yellow-800' },
+    ADVANCE: { label: 'Advanced', className: 'bg-blue-100 text-blue-800' },
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <ScaleIcon className="h-4 w-4 text-violet-600" aria-hidden />
+            <CardTitle>Decision</CardTitle>
+          </div>
+          <span
+            className={cn('rounded border px-2 py-0.5 text-xs font-medium', info.className)}
+          >
+            {info.label}
+          </span>
+        </div>
+        <CardDescription>
+          {info.description}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {finalDecision && (
+          <div className={cn('rounded p-3 text-sm', decisionBadge[finalDecision.decision].className)}>
+            <p className="font-semibold">
+              {decisionBadge[finalDecision.decision].label} by {finalDecision.decidedByName} on{' '}
+              {new Date(finalDecision.decidedAt).toLocaleDateString()}
+            </p>
+            {finalDecision.notes && (
+              <p className="mt-1 text-xs">“{finalDecision.notes}”</p>
+            )}
+            {finalDecision.reason && (
+              <p className="mt-1 text-xs italic">Reason: {finalDecision.reason}</p>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded border border-slate-200 bg-slate-50 p-2">
+            <p className="font-semibold text-slate-700">AI CV Match</p>
+            <p className="text-lg font-semibold text-slate-900">{matchScore ?? '—'}</p>
+          </div>
+          <div className="rounded border border-slate-200 bg-slate-50 p-2">
+            <p className="font-semibold text-slate-700">Interview status</p>
+            <p className="text-sm text-slate-900">
+              {!hasInterview
+                ? 'Not scheduled'
+                : hasEvaluation
+                  ? 'Scorecard submitted'
+                  : 'Pending scorecard'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Link
+            href={`/hiring-requests/${hiringRequestId}/decision`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+          >
+            <ScaleIcon className="h-3.5 w-3.5" aria-hidden />
+            Open Decision Hub
+            <ArrowLeftIcon className="h-3 w-3 rotate-180" aria-hidden />
+          </Link>
+          {readiness === 'NEEDS_INTERVIEW' && (stage === 'screening' || stage === 'interview') && (
+            <Link
+              href={`/candidates/${candidateId}/interview-kit`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+            >
+              <MicIcon className="h-3.5 w-3.5" aria-hidden />
+              Prepare Interview Kit
+            </Link>
+          )}
+        </div>
+        <p className="text-xs italic text-slate-500">
+          AI is decision support. The human hiring manager remains responsible for the final call.
         </p>
       </CardContent>
     </Card>

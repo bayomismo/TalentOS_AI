@@ -177,6 +177,15 @@ enum EvaluationRecommendation {
   STRONG_NO_HIRE
 }
 
+/// Sprint 8: Human Final Decision for a candidate in a hiring request.
+/// AI never produces this value — it is always written by a user.
+enum DecisionValue {
+  ADVANCE
+  HOLD
+  REJECT
+  SELECTED
+}
+
 enum OfferStatus {
   DRAFT
   SENT
@@ -220,6 +229,12 @@ enum ActivityType {
   AI_TASK_COMPLETED
   INTERVIEW_KIT_GENERATED
   EVALUATION_SUBMITTED
+  DECISION_BRIEF_GENERATED
+  COMPARISON_VIEWED
+  CANDIDATE_SELECTED
+  CANDIDATE_HELD
+  CANDIDATE_REJECTED
+  CANDIDATE_ADVANCED
 }
 
 enum AITaskType {
@@ -231,6 +246,7 @@ enum AITaskType {
   SCORECARD
   OUTREACH
   GENERIC
+  DECISION_BRIEF
 }
 
 enum AITaskStatus {
@@ -289,6 +305,7 @@ model Organization {
   jobDescriptions JobDescription[]
   candidates      Candidate[]
   activities      Activity[]
+  candidateDecisions CandidateDecision[]
   aiTasks         AITask[]
   promptTemplates PromptTemplate[]
   offers          Offer[]
@@ -345,6 +362,7 @@ model User {
   scheduledInterviews Interview[]          @relation("InterviewScheduler")
   interviewParticipations InterviewParticipant[] @relation("InterviewParticipantUser")
   evaluationsGiven   InterviewEvaluation[]
+  candidateDecisions  CandidateDecision[] @relation("CandidateDecisionMaker")
   activities          Activity[]
   aiTasks             AITask[]
 
@@ -393,6 +411,7 @@ model HiringRequest {
   hiringManager  User?               @relation("HiringRequestHiringManager", fields: [hiringManagerId], references: [id], onDelete: SetNull)
   jobDescription JobDescription?     @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
   candidates     Candidate[]
+  candidateDecisions CandidateDecision[]
   interviews     Interview[]
   offers         Offer[]
   activities     Activity[]
@@ -497,6 +516,7 @@ model Candidate {
   interviews      Interview[]
   offers          Offer[]
   activities      Activity[]
+  candidateDecisions CandidateDecision[]
 
   @@unique([organizationId, email, hiringRequestId])
   @@index([organizationId])
@@ -786,6 +806,7 @@ model Activity {
   hiringRequestId String?       @db.Uuid
   interviewId     String?       @db.Uuid
   offerId         String?       @db.Uuid
+  candidateDecisionId String?   @db.Uuid
   title           String
   description     String?       @db.Text
   metadata        Json          @default("{}")
@@ -799,6 +820,7 @@ model Activity {
   hiringRequest HiringRequest? @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
   interview     Interview?     @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   offer         Offer?         @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  candidateDecision CandidateDecision? @relation(fields: [candidateDecisionId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, occurredAt])
   @@index([organizationId, type])
@@ -823,6 +845,7 @@ model AITask {
   prompt          String       @db.Text
   result          Json?
   errorMessage    String?
+  metadata        Json          @default("{}")
   inputTokens     Int?
   outputTokens    Int?
   modelUsed       String?
@@ -877,4 +900,39 @@ model PromptTemplate {
   @@index([organizationId, category])
   @@index([category, isPublic])
   @@index([name])
+}
+
+// -----------------------------------------------------------------------------
+// Sprint 8: CandidateDecision
+// -----------------------------------------------------------------------------
+// A human-written final decision for a candidate in a hiring request.
+// One row per (candidate, hiringRequest). The decision is always written
+// by an authenticated user; the AI never produces or modifies it.
+
+model CandidateDecision {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String        @db.Uuid
+  candidateId     String        @db.Uuid
+  hiringRequestId String        @db.Uuid
+  decision        DecisionValue
+  /// Free-form notes the decision-maker wrote when recording the decision.
+  notes           String?       @db.Text
+  /// Optional short reason label (e.g. "Strongest match" or "Better fit available").
+  reason          String?
+  /// Audit: who recorded the decision and when.
+  decidedById     String        @db.Uuid
+  decidedAt       DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidate     Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  hiringRequest HiringRequest  @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  decidedBy     User           @relation("CandidateDecisionMaker", fields: [decidedById], references: [id], onDelete: Restrict)
+  activities    Activity[]
+
+  @@unique([candidateId, hiringRequestId])
+  @@index([organizationId])
+  @@index([hiringRequestId, decision])
+  @@index([candidateId])
 }

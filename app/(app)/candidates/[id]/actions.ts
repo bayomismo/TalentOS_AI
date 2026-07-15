@@ -103,6 +103,19 @@ export interface CandidateDetail {
     completed: number
     upcoming: number
   }
+  /** Sprint 8: latest human decision for this candidate. */
+  finalDecision: {
+    id: string
+    decision: 'ADVANCE' | 'HOLD' | 'REJECT' | 'SELECTED'
+    notes: string | null
+    reason: string | null
+    decidedByName: string
+    decidedAt: string
+  } | null
+  /** Sprint 8: hiring request this candidate belongs to (for the Decision Hub CTA). */
+  hiringRequestId: string
+  /** Sprint 8: AI match score for readiness display. */
+  matchScore: number | null
 }
 
 export async function getCandidateDetailAction(id: string): Promise<CandidateDetail | null> {
@@ -193,6 +206,9 @@ export async function getCandidateDetailAction(id: string): Promise<CandidateDet
     analysis,
     latestInterview: null,
     interviewCounts: { total: 0, completed: 0, upcoming: 0 },
+    finalDecision: null,
+    hiringRequestId: c.hiringRequestId,
+    matchScore: c.matchScore,
   }
 
   // Sprint 7: load latest interview + interview counts in parallel so the
@@ -236,6 +252,25 @@ export async function getCandidateDetailAction(id: string): Promise<CandidateDet
       }
     : null
   result.interviewCounts = { total, completed, upcoming }
+
+  // Sprint 8: latest human decision for this candidate
+  const latestDecision = await db.candidateDecision.findFirst({
+    where: { candidateId: id },
+    orderBy: { decidedAt: 'desc' },
+    include: { decidedBy: { select: { firstName: true, lastName: true } } },
+  })
+  if (latestDecision) {
+    result.finalDecision = {
+      id: latestDecision.id,
+      decision: latestDecision.decision,
+      notes: latestDecision.notes,
+      reason: latestDecision.reason,
+      decidedByName: latestDecision.decidedBy
+        ? `${latestDecision.decidedBy.firstName} ${latestDecision.decidedBy.lastName}`
+        : 'Unknown',
+      decidedAt: latestDecision.decidedAt.toISOString(),
+    }
+  }
 
   return result
 }

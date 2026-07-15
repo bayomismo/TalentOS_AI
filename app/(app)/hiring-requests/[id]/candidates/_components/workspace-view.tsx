@@ -433,9 +433,14 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
         title={data.hiringRequest.title}
         description="Upload candidate CVs. TalentOS AI will parse, analyze, score, and rank them against the job description."
         actions={
-          <Button>
-            <Link href={`/hiring-requests`}>All hiring requests</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline">
+              <Link href={`/hiring-requests/${hiringRequestId}/decision`}>Decision Hub</Link>
+            </Button>
+            <Button>
+              <Link href={`/hiring-requests`}>All hiring requests</Link>
+            </Button>
+          </div>
         }
         meta={
           <>

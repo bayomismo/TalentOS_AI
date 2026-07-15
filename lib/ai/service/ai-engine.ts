@@ -44,6 +44,15 @@ import {
   type InterviewKitOutput,
 } from '../schemas/interview-kit.schema'
 import {
+  buildDecisionBriefSystemPrompt,
+  buildDecisionBriefUserPrompt,
+  type DecisionBriefPromptInput,
+} from '../prompts/decision-brief'
+import {
+  decisionBriefOutputSchema,
+  type DecisionBriefOutput,
+} from '../schemas/decision-brief.schema'
+import {
   AIEngineError,
   NotImplementedError,
   SchemaValidationError,
@@ -145,8 +154,27 @@ export class AIEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Health
+  // Sprint 8 — AI Decision Brief
   // ---------------------------------------------------------------------------
+
+  /**
+   * Generates a structured Decision Brief for a small set of finalists
+   * (2-4 candidates). The brief is evidence-based, cites its sources,
+   * and NEVER names a winner, a hire, or a rejection. The human user
+   * owns the final call.
+   *
+   * Uses `provider.generate` + manual Zod parse (not responseJsonSchema)
+   * for the same reason as the interview kit: Gemini rejects the
+   * responseJsonSchema for deeply nested output.
+   */
+  async generateDecisionBrief(
+    input: DecisionBriefPromptInput
+  ): Promise<ProviderResult<DecisionBriefOutput>> {
+    const userPrompt = buildDecisionBriefUserPrompt(input)
+    return this.callDecisionBrief(userPrompt)
+  }
+
+
 
   async health(): Promise<ProviderHealth> {
     return this.provider.healthCheck()
@@ -252,6 +280,56 @@ export class AIEngine {
     }
 
     throw new SchemaValidationError('interview-kit', serializeZodError(lastError.value))
+  }
+
+  /**
+   * Like callInterviewKit, but for the Decision Brief. Same
+   * application/json + Zod-validate + corrective-retry pattern.
+   */
+  private async callDecisionBrief(
+    userPrompt: string
+  ): Promise<ProviderResult<DecisionBriefOutput>> {
+    const systemPrompt = buildDecisionBriefSystemPrompt()
+    const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
+
+    const lastError: { value: unknown } = { value: null }
+    const maxAttempts = 2
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const promptToUse =
+        attempt === 1
+          ? fullPrompt
+          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+
+      try {
+        const result = await this.provider.generate(promptToUse, {
+          responseMimeType: 'application/json',
+          temperature: 0.3,
+        })
+        let rawText = (result.data as string).trim()
+        rawText = rawText
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim()
+        let parsedJson: unknown
+        try {
+          parsedJson = JSON.parse(rawText)
+        } catch (jsonErr) {
+          lastError.value = jsonErr
+          continue
+        }
+        const parsed = decisionBriefOutputSchema.safeParse(parsedJson)
+        if (parsed.success) {
+          return { ...result, data: parsed.data }
+        }
+        lastError.value = parsed.error
+      } catch (err) {
+        if (err instanceof AIEngineError) throw err
+        lastError.value = err
+      }
+    }
+
+    throw new SchemaValidationError('decision-brief', serializeZodError(lastError.value))
   }
 }
 

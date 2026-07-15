@@ -186,11 +186,4 @@ export async function startInterviewAction(
   }
 }
 
-// Re-export the question-asked marker (kept here so consumers have one
-// import path for all read+write actions related to interview data).
-export { markInterviewQuestionAskedAction } from './update-question'
 
-// Silence unused-export warning (kitQuestionToView is consumed by tests)
-export const __kitQuestionToView = kitQuestionToView
-// Silence unused-import for resolveNames (kept for future callers)
-export const __resolveNames = resolveNames

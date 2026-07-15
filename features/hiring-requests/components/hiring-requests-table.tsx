@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowRightIcon, UsersIcon } from 'lucide-react'
+import { ArrowRightIcon, ScaleIcon, UsersIcon } from 'lucide-react'
 import type { Position } from '@/types'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { cn } from '@/lib/utils'
@@ -129,15 +129,25 @@ export function HiringRequestsTable({ positions, showCandidateActions = false }:
               </td>
               {showCandidateActions && (
                 <td className="px-4 py-3 text-right">
-                  <Link
-                    href={`/hiring-requests/${position.id}/candidates`}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
-                    aria-label={`Open Candidate Workspace for ${position.title}`}
-                  >
-                    <UsersIcon className="h-3.5 w-3.5" aria-hidden />
-                    Candidate Workspace
-                    <ArrowRightIcon className="h-3 w-3" aria-hidden />
-                  </Link>
+                  <div className="inline-flex items-center gap-2">
+                    <Link
+                      href={`/hiring-requests/${position.id}/decision`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40"
+                      aria-label={`Open Decision Hub for ${position.title}`}
+                    >
+                      <ScaleIcon className="h-3.5 w-3.5" aria-hidden />
+                      Decision Hub
+                    </Link>
+                    <Link
+                      href={`/hiring-requests/${position.id}/candidates`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
+                      aria-label={`Open Candidate Workspace for ${position.title}`}
+                    >
+                      <UsersIcon className="h-3.5 w-3.5" aria-hidden />
+                      Candidate Workspace
+                      <ArrowRightIcon className="h-3 w-3" aria-hidden />
+                    </Link>
+                  </div>
                 </td>
               )}
             </tr>

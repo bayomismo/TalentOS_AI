@@ -1,14 +1,10 @@
 /**
- * Sprint 8 — public API for the `interviews` feature.
- *
- * This is the single import surface that other features / pages should
- * use. It re-exports types, server actions, and the key mappers +
- * scoring service.
+ * Server-side barrel for the `interviews` feature. Re-exports types and
+ * actions, plus service-level helpers and mappers for advanced consumers
+ * and tests. NOT intended to be imported from client components — the
+ * service modules pull in Prisma. Use `features/interviews/actions`
+ * for the client-safe surface.
  */
-
-// -----------------------------------------------------------------------------
-// Types
-// -----------------------------------------------------------------------------
 
 export type {
   ActionResult,
@@ -30,26 +26,16 @@ export type {
   EvaluationRecommendation,
 } from './types'
 
-// -----------------------------------------------------------------------------
-// Server actions
-// -----------------------------------------------------------------------------
-
-export { generateInterviewKitAction } from './actions/generate-interview-kit'
-export { createInterviewAction } from './actions/create-interview'
-export { submitEvaluationAction } from './actions/submit-evaluation'
 export {
+  generateInterviewKitAction,
+  createInterviewAction,
+  submitEvaluationAction,
   markInterviewQuestionAskedAction,
   markInterviewStartedAction,
-} from './actions/update-question'
-export {
   getInterviewKitAction,
   getCandidateInterviewsAction,
   getInterviewCenterAction,
-} from './actions/get-interview-data'
-
-// -----------------------------------------------------------------------------
-// Service-level exports (for advanced consumers and tests)
-// -----------------------------------------------------------------------------
+} from './actions'
 
 export { computeScoring } from './services/interview-scoring-service'
 export { generateInterviewKitService } from './services/interview-kit-service'
