@@ -27,6 +27,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
 import 'dotenv/config'
 import { db } from '../lib/db'
+import { login, ADMIN_USER } from './test-auth-helper'
 
 const PRODUCTION_URL = 'https://talentos-ai-lime.vercel.app'
 
@@ -110,6 +111,9 @@ async function main() {
     }
   })
 
+  // Authenticate first (Sprint 9 added login requirement)
+  await login(page, ADMIN_USER)
+  
   // ---------------------------------------------------------------------
   // 1. Hiring Requests table → Decision Hub CTA
   // ---------------------------------------------------------------------

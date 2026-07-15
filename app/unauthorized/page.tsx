@@ -29,8 +29,12 @@ export default function UnauthorizedPage() {
           If you believe this is a mistake, contact your organization administrator.
         </p>
         <div className="mt-6 flex items-center justify-center gap-2">
-          <Button variant="outline" onClick={() => window.location.href = "/dashboard"}>Back to dashboard</Button>
-          <Button onClick={() => window.location.href = "/login"}>Sign in as a different user</Button>
+          <Button variant="outline">
+            <Link href="/dashboard">Back to dashboard</Link>
+          </Button>
+          <Button>
+            <Link href="/login">Sign in as a different user</Link>
+          </Button>
         </div>
       </div>
     </div>
