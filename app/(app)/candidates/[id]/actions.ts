@@ -85,6 +85,24 @@ export interface CandidateDetail {
   certifications: CandidateCertification[]
   cvFiles: CandidateCVFile[]
   analysis: MatchAnalysisBlock | null
+  /** Sprint 7: most recent interview (if any) — for the candidate detail header. */
+  latestInterview: {
+    id: string
+    type: string
+    status: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW' | 'RESCHEDULED'
+    scheduledAt: string
+    durationMinutes: number
+    participantNames: string[]
+    hasEvaluation: boolean
+    interviewScore: number | null
+    recommendation: 'STRONG_HIRE' | 'HIRE' | 'MIXED' | 'NO_HIRE' | 'STRONG_NO_HIRE' | null
+  } | null
+  /** Sprint 7: total counts across all interviews for this candidate. */
+  interviewCounts: {
+    total: number
+    completed: number
+    upcoming: number
+  }
 }
 
 export async function getCandidateDetailAction(id: string): Promise<CandidateDetail | null> {
@@ -126,7 +144,7 @@ export async function getCandidateDetailAction(id: string): Promise<CandidateDet
           analyzedAt: c.analyzedAt?.toISOString() ?? null,
         }
 
-  return {
+  const result: CandidateDetail = {
     id: c.id,
     name: `${c.firstName} ${c.lastName}`,
     email: c.email,
@@ -173,5 +191,51 @@ export async function getCandidateDetailAction(id: string): Promise<CandidateDet
       uploadedAt: f.uploadedAt.toISOString(),
     })),
     analysis,
+    latestInterview: null,
+    interviewCounts: { total: 0, completed: 0, upcoming: 0 },
   }
+
+  // Sprint 7: load latest interview + interview counts in parallel so the
+  // detail page can show interview status alongside the AI match analysis.
+  const [latestInterview, interviewAgg] = await Promise.all([
+    db.interview.findFirst({
+      where: { candidateId: id },
+      orderBy: { scheduledAt: 'desc' },
+      include: {
+        participants: { include: { user: { select: { firstName: true, lastName: true } } } },
+        evaluations: { orderBy: { submittedAt: 'desc' }, take: 1, select: { interviewScore: true, recommendation: true } },
+      },
+    }),
+    db.interview.groupBy({
+      by: ['status'],
+      where: { candidateId: id },
+      _count: { _all: true },
+    }),
+  ])
+
+  let completed = 0
+  let upcoming = 0
+  let total = 0
+  for (const row of interviewAgg) {
+    total += row._count._all
+    if (row.status === 'COMPLETED') completed += row._count._all
+    if (row.status === 'SCHEDULED' || row.status === 'IN_PROGRESS') upcoming += row._count._all
+  }
+
+  result.latestInterview = latestInterview
+    ? {
+        id: latestInterview.id,
+        type: latestInterview.type,
+        status: latestInterview.status,
+        scheduledAt: latestInterview.scheduledAt.toISOString(),
+        durationMinutes: latestInterview.durationMinutes,
+        participantNames: latestInterview.participants.map(p => `${p.user.firstName} ${p.user.lastName}`),
+        hasEvaluation: latestInterview.evaluations.length > 0,
+        interviewScore: latestInterview.evaluations[0]?.interviewScore ?? null,
+        recommendation: latestInterview.evaluations[0]?.recommendation ?? null,
+      }
+    : null
+  result.interviewCounts = { total, completed, upcoming }
+
+  return result
 }

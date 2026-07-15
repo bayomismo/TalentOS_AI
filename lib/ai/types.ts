@@ -43,6 +43,12 @@ export interface GenerateOptions {
   topP?: number
   /** Max output tokens. Provider-specific mapping. */
   maxOutputTokens?: number
+  /**
+   * Force a particular response MIME type. Provider support varies;
+   * Gemini supports `application/json` and `text/plain`. When omitted,
+   * the provider picks a sensible default.
+   */
+  responseMimeType?: 'text/plain' | 'application/json'
   /** AbortSignal for cancellation. */
   signal?: AbortSignal
   /** Free-form provider-specific overrides. */

@@ -1,331 +1,248 @@
 'use client'
 
-import { useState } from 'react'
+/**
+ * Sprint 7 — Interview Center.
+ *
+ * Live data from Prisma. Upcoming / Today's / Past / Completed tabs.
+ * Each row links to the candidate's interview kit.
+ */
+
+import Link from 'next/link'
+import { use, useEffect, useState, useTransition } from 'react'
 import {
   CalendarIcon,
   CheckCircle2Icon,
   ClockIcon,
-  PlusIcon,
+  FileTextIcon,
+  MicIcon,
   UsersIcon,
-  VideoIcon,
 } from 'lucide-react'
+
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/shared/card'
-import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
+import { Button } from '@/components/ui/button'
+import { getInterviewCenterAction, type InterviewCenterData, type CandidateInterviewListItem } from '@/app/(app)/candidates/[id]/interview-kit/actions'
 import { cn } from '@/lib/utils'
 
-type TabId = 'upcoming' | 'past' | 'today' | 'all'
-
-interface Interview {
-  id: string
-  candidate: string
-  role: string
-  stage: string
-  type: 'Phone screen' | 'Technical' | 'On-site' | 'Final' | 'Culture fit'
-  date: string
-  time: string
-  duration: string
-  interviewers: string[]
-  meetingLink: string
-}
-
-const UPCOMING: Interview[] = [
-  {
-    id: 'i-001',
-    candidate: 'Sarah Chen',
-    role: 'Senior Software Engineer',
-    stage: 'Technical round',
-    type: 'Technical',
-    date: 'Tue, Jul 16',
-    time: '10:00 AM',
-    duration: '60 min',
-    interviewers: ['Priya Patel', 'Marcus Chen'],
-    meetingLink: '#',
-  },
-  {
-    id: 'i-002',
-    candidate: 'Elena Rodriguez',
-    role: 'Product Manager',
-    stage: 'On-site loop',
-    type: 'On-site',
-    date: 'Wed, Jul 17',
-    time: '2:00 PM',
-    duration: '240 min',
-    interviewers: ['Jordan Rivera', 'Priya Patel', 'Marcus Chen', 'Elena R.'],
-    meetingLink: '#',
-  },
-  {
-    id: 'i-003',
-    candidate: 'James Williams',
-    role: 'Senior Software Engineer',
-    stage: 'Recruiter screen',
-    type: 'Phone screen',
-    date: 'Thu, Jul 18',
-    time: '11:30 AM',
-    duration: '30 min',
-    interviewers: ['Jordan Rivera'],
-    meetingLink: '#',
-  },
-  {
-    id: 'i-004',
-    candidate: 'Lisa Anderson',
-    role: 'UX/UI Designer',
-    stage: 'Portfolio review',
-    type: 'Culture fit',
-    date: 'Fri, Jul 19',
-    time: '9:00 AM',
-    duration: '45 min',
-    interviewers: ['Priya Patel', 'Marcus Chen'],
-    meetingLink: '#',
-  },
-]
-
-const PAST: Interview[] = [
-  {
-    id: 'i-p1',
-    candidate: 'Marcus Johnson',
-    role: 'Senior Software Engineer',
-    stage: 'Final round',
-    type: 'Final',
-    date: 'Mon, Jul 8',
-    time: '3:00 PM',
-    duration: '60 min',
-    interviewers: ['Jordan Rivera', 'Priya Patel'],
-    meetingLink: '#',
-  },
-  {
-    id: 'i-p2',
-    candidate: 'Priya Patel',
-    role: 'UX/UI Designer',
-    stage: 'On-site loop',
-    type: 'On-site',
-    date: 'Wed, Jul 3',
-    time: '10:00 AM',
-    duration: '180 min',
-    interviewers: ['Jordan Rivera', 'Marcus Chen', 'Elena R.'],
-    meetingLink: '#',
-  },
-]
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: 'upcoming', label: 'Upcoming' },
-  { id: 'today', label: 'Today' },
-  { id: 'past', label: 'Past' },
-  { id: 'all', label: 'All' },
-]
+type TabId = 'today' | 'upcoming' | 'past' | 'completed'
 
 export default function InterviewCenterPage() {
-  const [tab, setTab] = useState<TabId>('upcoming')
+  const [data, setData] = useState<InterviewCenterData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<TabId>('today')
+  const [, startTransition] = useTransition()
 
-  const stats = {
-    upcoming: UPCOMING.length,
-    today: UPCOMING.filter(i => i.date.includes('Tue, Jul 16')).length,
-    past: PAST.length,
+  useEffect(() => {
+    let cancelled = false
+    startTransition(async () => {
+      const r = await getInterviewCenterAction()
+      if (cancelled) return
+      if (r.ok) setData(r.data)
+      setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-6 p-8">
+        <div className="h-8 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
+        <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800" />
+      </div>
+    )
   }
+
+  const tabs: Array<{ id: TabId; label: string; count: number; items: CandidateInterviewListItem[] }> = [
+    { id: 'today', label: 'Today', count: data.counts.today, items: data.today },
+    { id: 'upcoming', label: 'Upcoming', count: data.counts.upcoming, items: data.upcoming },
+    { id: 'past', label: 'Past', count: data.counts.past, items: data.past },
+    { id: 'completed', label: 'Completed', count: data.counts.completed, items: data.completed },
+  ]
+  const active = tabs.find(t => t.id === tab) ?? tabs[0]
 
   return (
     <div className="space-y-8 p-8">
       <PageHeader
         title="Interview Center"
-        description="Plan, run, and review every interview loop. Keep candidates, hiring managers, and interviewers in sync from a single place."
-        actions={
-          <>
-            <Button variant="outline">
-              <CalendarIcon className="h-4 w-4" />
-              Sync calendars
-            </Button>
-            <Button>
-              <PlusIcon className="h-4 w-4" />
-              Schedule interview
-            </Button>
-          </>
-        }
+        description="Schedule, conduct, and evaluate structured interviews."
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-              <ClockIcon className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Upcoming</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-                {stats.upcoming}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <CalendarIcon className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Today</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-                {stats.today}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-500/10 text-slate-600 dark:text-slate-400">
-              <CheckCircle2Icon className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Completed</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-                {stats.past}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <KpiCard label="Today" value={data.counts.today} icon={ClockIcon} accent="sky" />
+        <KpiCard label="Upcoming" value={data.counts.upcoming} icon={CalendarIcon} accent="indigo" />
+        <KpiCard label="Completed" value={data.counts.completed} icon={CheckCircle2Icon} accent="emerald" />
+        <KpiCard label="All time" value={data.counts.all} icon={MicIcon} accent="slate" />
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <CardTitle>Interviews</CardTitle>
-              <CardDescription>
-                {tab === 'upcoming' && 'Interviews scheduled in the next 7 days.'}
-                {tab === 'today' && "Interviews on today's calendar."}
-                {tab === 'past' && 'Recently completed interviews.'}
-                {tab === 'all' && 'Every interview across your pipeline.'}
-              </CardDescription>
-            </div>
-            <div
-              role="tablist"
-              aria-label="Filter interviews by time"
-              className="flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800"
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-700">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              'flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition',
+              t.id === tab
+                ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+            )}
+          >
+            {t.label}
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-xs',
+                t.id === tab
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+              )}
             >
-              {TABS.map(t => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40',
-                    tab === t.id
-                      ? 'bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-900'
-                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-50'
-                  )}
-                >
-                  {t.label}
-                </button>
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {active.items.length === 0 ? (
+        <EmptyState
+          icon={MicIcon}
+          title={`No ${active.label.toLowerCase()} interviews`}
+          description={
+            tab === 'today'
+              ? "You don't have any interviews scheduled for today. New interviews created from a candidate's interview kit will appear here automatically."
+              : tab === 'upcoming'
+                ? 'No interviews are scheduled in the future yet.'
+                : tab === 'completed'
+                  ? 'No completed interviews yet. After an evaluation is submitted, the interview will appear here.'
+                  : 'No past interviews to show.'
+          }
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <ul className="divide-y divide-slate-200 dark:divide-slate-700">
+              {active.items.map(item => (
+                <InterviewRow key={item.id} item={item} tab={tab} />
               ))}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {tab === 'past' ? (
-            PAST.length > 0 ? (
-              PAST.map(i => <InterviewRow key={i.id} interview={i} past />)
-            ) : (
-              <EmptyState title="No past interviews yet" />
-            )
-          ) : UPCOMING.length > 0 ? (
-            UPCOMING.map(i => <InterviewRow key={i.id} interview={i} />)
-          ) : (
-            <EmptyState title="Nothing scheduled" description="When you book interviews, they'll appear here." />
-          )}
-        </CardContent>
-      </Card>
+            </ul>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
 
-function InterviewRow({
-  interview,
-  past = false,
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  accent,
 }: {
-  interview: Interview
-  past?: boolean
+  label: string
+  value: number
+  icon: typeof MicIcon
+  accent: 'sky' | 'emerald' | 'indigo' | 'slate'
 }) {
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:shadow-sm md:flex-row md:items-center md:justify-between dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-600">
-      <div className="flex flex-1 items-start gap-4">
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {label}
+            </p>
+            <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-slate-50">{value}</p>
+          </div>
+          <div
+            className={cn(
+              'flex h-10 w-10 items-center justify-center rounded-lg',
+              accent === 'sky' && 'bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300',
+              accent === 'emerald' && 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300',
+              accent === 'indigo' && 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300',
+              accent === 'slate' && 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+            )}
+          >
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function InterviewRow({ item, tab }: { item: CandidateInterviewListItem; tab: TabId }) {
+  const date = new Date(item.scheduledAt)
+  const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40">
+      <div className="flex flex-1 items-center gap-4">
         <div
           className={cn(
-            'hidden h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl text-center md:flex',
-            past
-              ? 'bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400'
-              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+            'flex h-12 w-12 flex-col items-center justify-center rounded-lg text-center',
+            item.status === 'COMPLETED'
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+              : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
           )}
         >
-          <span className="text-[10px] font-semibold uppercase tracking-wider">
-            {interview.date.split(',')[0]}
-          </span>
-          <span className="text-lg font-bold">
-            {interview.date.split(' ')[2]}
-          </span>
+          <div className="text-[10px] font-semibold uppercase tracking-wide">
+            {date.toLocaleDateString(undefined, { month: 'short' })}
+          </div>
+          <div className="text-lg font-bold leading-none">{date.getDate()}</div>
         </div>
-
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-              {interview.candidate}
-            </h3>
-            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-              {interview.type}
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            {interview.role} · {interview.stage}
-          </p>
-          <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-500 dark:text-slate-400">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">
+            {item.title}
+          </h3>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
             <span className="inline-flex items-center gap-1">
-              <ClockIcon className="h-3.5 w-3.5" />
-              {interview.time} · {interview.duration}
+              <CalendarIcon className="h-3 w-3" />
+              {dateStr} · {timeStr}
             </span>
             <span className="inline-flex items-center gap-1">
-              <UsersIcon className="h-3.5 w-3.5" />
-              {interview.interviewers.length} interviewer
-              {interview.interviewers.length === 1 ? '' : 's'}
+              <ClockIcon className="h-3 w-3" />
+              {item.durationMinutes} min
             </span>
-          </div>
-          <div className="flex -space-x-1.5 pt-1">
-            {interview.interviewers.slice(0, 4).map((name, i) => (
-              <div
-                key={name}
-                title={name}
-                className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-emerald-500/10 text-[10px] font-semibold text-emerald-700 dark:border-slate-800 dark:text-emerald-300"
-                style={{ zIndex: 4 - i }}
-              >
-                {name.split(' ').map(p => p[0]).join('').slice(0, 2)}
-              </div>
-            ))}
-            {interview.interviewers.length > 4 && (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[10px] font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-700 dark:text-slate-300">
-                +{interview.interviewers.length - 4}
-              </div>
+            {item.participantNames.length > 0 && (
+              <span className="inline-flex items-center gap-1">
+                <UsersIcon className="h-3 w-3" />
+                {item.participantNames.join(', ')}
+              </span>
             )}
-          </div>
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              {item.type.replace(/_/g, ' ')}
+            </span>
+            {item.status === 'COMPLETED' && (
+              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                Completed
+              </span>
+            )}
+          </p>
         </div>
       </div>
-
-      <div className="flex flex-wrap items-center gap-2 md:flex-shrink-0">
-        {past ? (
-          <Button variant="outline" size="sm">
-            View scorecard
-          </Button>
+      <div className="flex items-center gap-3">
+        {item.hasEvaluation ? (
+          <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800">
+            {item.interviewScore ?? 0} / 100 · {item.evaluationRecommendation?.replace(/_/g, ' ') ?? '—'}
+          </span>
         ) : (
-          <>
-            <Button variant="outline" size="sm">
-              Reschedule
-            </Button>
-            <Button size="sm">
-              <VideoIcon className="h-3.5 w-3.5" />
-              Join
-            </Button>
-          </>
+          <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            Awaiting evaluation
+          </span>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            window.location.href = `/candidates/${item.candidateId}/interview-kit/${item.id}`
+          }}
+        >
+          <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
+          {item.hasEvaluation ? 'View' : tab === 'completed' ? 'View' : 'Open kit'}
+        </Button>
       </div>
-    </div>
+    </li>
   )
 }

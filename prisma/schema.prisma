@@ -150,6 +150,18 @@ enum QuestionType {
   CODING
 }
 
+/// Sprint 7: Where a question sits in the interview flow.
+enum QuestionPurpose {
+  OPENING
+  ROLE_SPECIFIC
+  SKILL_VALIDATION
+  GAP_VALIDATION
+  BEHAVIORAL
+  SCENARIO
+  CANDIDATE_SPECIFIC
+  CLOSING
+}
+
 enum QuestionDifficulty {
   EASY
   MEDIUM
@@ -160,6 +172,7 @@ enum QuestionDifficulty {
 enum EvaluationRecommendation {
   STRONG_HIRE
   HIRE
+  MIXED
   NO_HIRE
   STRONG_NO_HIRE
 }
@@ -205,6 +218,8 @@ enum ActivityType {
   HIRING_REQUEST_CLOSED
   AI_TASK_STARTED
   AI_TASK_COMPLETED
+  INTERVIEW_KIT_GENERATED
+  EVALUATION_SUBMITTED
 }
 
 enum AITaskType {
@@ -611,6 +626,12 @@ model Interview {
   notes           String?         @db.Text
   cancelledReason String?
   completedAt     DateTime?
+  /// Sprint 7: AI-generated interview kit snapshot (questions, scorecard
+  /// criteria, overview). Stored on the Interview so the kit can be
+  /// replayed even if individual InterviewQuestion rows are edited.
+  kitSnapshot     Json?
+  /// Sprint 7: when the interviewer opened the kit to start the session.
+  startedAt       DateTime?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -651,8 +672,20 @@ model InterviewQuestion {
   interviewId String            @db.Uuid
   category    String
   type        QuestionType
+  /// Sprint 7: where this question sits in the interview flow.
+  purpose     QuestionPurpose  @default(ROLE_SPECIFIC)
   difficulty  QuestionDifficulty @default(MEDIUM)
   question    String             @db.Text
+  /// Why this question is being asked for THIS candidate.
+  whyThisQuestion        String?  @db.Text
+  /// What competency or skill this question evaluates.
+  whatItEvaluates        String?  @db.Text
+  /// Observable indicators of a strong answer.
+  strongAnswerIndicators String?  @db.Text
+  /// Red flags / weak signals to watch for.
+  redFlags               String?  @db.Text
+  /// Suggested follow-up to dig deeper.
+  suggestedFollowUp      String?  @db.Text
   expectedAnswer String?         @db.Text
   notes       String?            @db.Text
   order       Int               @default(0)
@@ -664,6 +697,7 @@ model InterviewQuestion {
 
   @@index([interviewId, order])
   @@index([interviewId, category])
+  @@index([interviewId, purpose])
 }
 
 model InterviewEvaluation {
@@ -675,8 +709,17 @@ model InterviewEvaluation {
   communicationScore Int?
   cultureFitScore Int?
   problemSolvingScore Int?
+  /// Sprint 7: deterministic interview score (0–100) computed by the
+  /// application from criterion scores and weights, NOT by Gemini.
+  interviewScore  Int?
+  /// Sprint 7: per-criterion scores, keyed by criterion name. JSON to
+  /// support flexible scorecards (different jobs generate different
+  /// criteria).
+  criterionScores Json?
   strengths       String?                 @db.Text
   weaknesses      String?                 @db.Text
+  /// Sprint 7: free-form observations the interviewer wants to keep.
+  overallNotes    String?                 @db.Text
   recommendation  EvaluationRecommendation
   summary         String?                 @db.Text
   submittedAt     DateTime                @default(now())

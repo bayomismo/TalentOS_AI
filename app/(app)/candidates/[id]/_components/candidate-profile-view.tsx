@@ -16,10 +16,12 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   ClockIcon,
+  ClipboardListIcon,
   FileTextIcon,
   GraduationCapIcon,
   MailIcon,
   MapPinIcon,
+  MicIcon,
   PhoneIcon,
   SparklesIcon,
   StarIcon,
@@ -113,6 +115,24 @@ export function CandidateProfileView({ id }: { id: string }) {
               <MailIcon className="h-4 w-4" aria-hidden />
               Message
             </Button>
+            {(candidate.stage === 'screening' || candidate.stage === 'interview') && (
+              <Link
+                href={`/candidates/${candidate.id}/interview-kit`}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+              >
+                <SparklesIcon className="h-4 w-4" aria-hidden />
+                Generate Interview Kit
+              </Link>
+            )}
+            {candidate.latestInterview && (
+              <Link
+                href={`/candidates/${candidate.id}/interview-kit/${candidate.latestInterview.id}`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <MicIcon className="h-4 w-4" aria-hidden />
+                Open Interview Kit
+              </Link>
+            )}
             <Button variant="outline">
               <CalendarIcon className="h-4 w-4" aria-hidden />
               Schedule interview
@@ -160,6 +180,16 @@ export function CandidateProfileView({ id }: { id: string }) {
         <div className="space-y-6">
           {/* AI Match Analysis (Sprint 6) */}
           {candidate.analysis && <AnalysisCard analysis={candidate.analysis} firstName={firstName} />}
+
+          {/* Sprint 7: Interview kit + latest evaluation */}
+          {(candidate.latestInterview || candidate.interviewCounts.total > 0) && (
+            <InterviewCard
+              candidateId={candidate.id}
+              latestInterview={candidate.latestInterview}
+              counts={candidate.interviewCounts}
+              stage={candidate.stage}
+            />
+          )}
 
           {/* Profile summary */}
           {candidate.summary && (
@@ -722,4 +752,133 @@ function recommendationToColor(rec: string | null) {
         text: 'text-slate-900 dark:text-slate-200',
       }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Sprint 7: Interview kit + latest evaluation card
+// -----------------------------------------------------------------------------
+
+interface InterviewCardProps {
+  candidateId: string
+  latestInterview: NonNullable<CandidateDetail['latestInterview']> | null
+  counts: CandidateDetail['interviewCounts']
+  stage: CandidateDetail['stage']
+}
+
+function InterviewCard({ candidateId, latestInterview, counts, stage }: InterviewCardProps) {
+  const eligibleForKit = stage === 'screening' || stage === 'interview'
+  const linkToKit = latestInterview
+    ? `/candidates/${candidateId}/interview-kit/${latestInterview.id}`
+    : `/candidates/${candidateId}/interview-kit`
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <MicIcon className="h-4 w-4 text-emerald-600" aria-hidden />
+            <CardTitle>Interview</CardTitle>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <span>
+              {counts.total} total · {counts.completed} completed · {counts.upcoming} upcoming
+            </span>
+          </div>
+        </div>
+        <CardDescription>
+          AI-generated, personalized interview kit + structured evaluation.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {latestInterview ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Interview status
+              </div>
+              <div className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-slate-50">
+                {latestInterview.status.replace(/_/g, ' ').toLowerCase()}
+              </div>
+              <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                {latestInterview.type.replace(/_/g, ' ')} · {latestInterview.durationMinutes} min
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Interview score
+              </div>
+              <div
+                className={cn(
+                  'mt-1 text-2xl font-bold',
+                  latestInterview.interviewScore != null && latestInterview.interviewScore >= 70
+                    ? 'text-emerald-700 dark:text-emerald-300'
+                    : latestInterview.interviewScore != null && latestInterview.interviewScore >= 50
+                      ? 'text-amber-700 dark:text-amber-300'
+                      : latestInterview.interviewScore != null
+                        ? 'text-rose-700 dark:text-rose-300'
+                        : 'text-slate-500 dark:text-slate-400'
+                )}
+              >
+                {latestInterview.interviewScore != null ? `${latestInterview.interviewScore} / 100` : 'Not yet evaluated'}
+              </div>
+              {latestInterview.recommendation && (
+                <div className="mt-0.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+                  {latestInterview.recommendation.replace(/_/g, ' ')}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Interviewers
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {latestInterview.participantNames.length === 0 ? (
+                  <span className="text-sm text-slate-500 dark:text-slate-400">None assigned</span>
+                ) : (
+                  latestInterview.participantNames.map(n => (
+                    <span
+                      key={n}
+                      className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {n}
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No interview has been scheduled for this candidate yet.
+            {eligibleForKit && ' Generate an AI-personalized kit to get started.'}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={linkToKit}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              'bg-emerald-600 text-white hover:bg-emerald-700'
+            )}
+          >
+            <SparklesIcon className="h-4 w-4" />
+            {latestInterview ? 'Open interview kit' : eligibleForKit ? 'Generate interview kit' : 'View'}
+          </Link>
+          {latestInterview && !latestInterview.hasEvaluation && latestInterview.status !== 'COMPLETED' && (
+            <Link
+              href={`/candidates/${candidateId}/interview-kit/${latestInterview.id}/evaluate`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <ClipboardListIcon className="h-4 w-4" />
+              Start evaluation
+            </Link>
+          )}
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          AI is decision support. The human interviewer / hiring manager remains
+          responsible for the final call.
+        </p>
+      </CardContent>
+    </Card>
+  )
 }

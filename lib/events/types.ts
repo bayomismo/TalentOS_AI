@@ -149,6 +149,54 @@ export interface CandidateStageChangedSnapshot {
 }
 
 // -----------------------------------------------------------------------------
+// Sprint 7: Interview Kit + Evaluation event payloads
+// -----------------------------------------------------------------------------
+
+export interface InterviewKitSnapshot {
+  interviewId: string
+  candidateId: string
+  hiringRequestId: string
+  recommendedType: string
+  recommendedDurationMinutes: number
+  questionCount: number
+  criterionCount: number
+  generatedAt: string
+}
+
+export interface InterviewCreatedSnapshot {
+  interviewId: string
+  candidateId: string
+  hiringRequestId: string
+  scheduledAt: string
+  durationMinutes: number
+  type: string
+  round: number
+  participantNames: string[]
+}
+
+export interface InterviewStartedSnapshot {
+  interviewId: string
+  candidateId: string
+  startedAt: string
+}
+
+export interface InterviewEvaluationSnapshot {
+  interviewId: string
+  candidateId: string
+  evaluatorName: string
+  overallScore: number
+  interviewScore: number
+  recommendation: string
+  submittedAt: string
+}
+
+export interface InterviewCompletedSnapshot {
+  interviewId: string
+  candidateId: string
+  completedAt: string
+}
+
+// -----------------------------------------------------------------------------
 // The bus's event union
 // -----------------------------------------------------------------------------
 
@@ -188,6 +236,12 @@ export type TalentOSEvent =
   | { type: 'CandidateAnalyzed'; payload: CandidateAnalyzedSnapshot }
   | { type: 'CandidateRanked'; payload: CandidateRankedSnapshot }
   | { type: 'CandidateStageChanged'; payload: CandidateStageChangedSnapshot }
+  // Sprint 7: Interview Kit + Evaluation events
+  | { type: 'InterviewKitGenerated'; payload: InterviewKitSnapshot }
+  | { type: 'InterviewCreated'; payload: InterviewCreatedSnapshot }
+  | { type: 'InterviewStarted'; payload: InterviewStartedSnapshot }
+  | { type: 'InterviewEvaluationSubmitted'; payload: InterviewEvaluationSnapshot }
+  | { type: 'InterviewCompleted'; payload: InterviewCompletedSnapshot }
 
 export type TalentOSEventType = TalentOSEvent['type']
 

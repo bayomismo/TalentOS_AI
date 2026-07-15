@@ -237,6 +237,9 @@ export class GeminiProvider implements AIProvider {
     if (options.maxOutputTokens !== undefined) {
       config.maxOutputTokens = options.maxOutputTokens
     }
+    if (options.responseMimeType) {
+      config.responseMimeType = options.responseMimeType
+    }
     if (schema) {
       // Constrain output to JSON. We also pass a Zod-derived schema when the
       // provider supports responseSchema; for Gemini, the simplest portable

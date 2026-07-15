@@ -24,6 +24,7 @@ import {
   FileTextIcon,
   FilterIcon,
   Loader2Icon,
+  MicIcon,
   RefreshCwIcon,
   SearchIcon,
   SparklesIcon,
@@ -1079,6 +1080,21 @@ function CandidateRow({
           >
             <RefreshCwIcon className="h-3.5 w-3.5" aria-hidden />
           </Button>
+          {(candidate.stage === 'SCREENING' || candidate.stage === 'INTERVIEW') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                window.location.href = `/candidates/${candidate.id}/interview-kit`
+              }}
+              aria-label={`Generate interview kit for ${candidate.fullName}`}
+              title="Generate / open interview kit"
+              className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+            >
+              <MicIcon className="h-3.5 w-3.5" aria-hidden />
+              <span className="ml-1.5">Interview Kit</span>
+            </Button>
+          )}
           <div className="relative">
             <Button
               variant="outline"

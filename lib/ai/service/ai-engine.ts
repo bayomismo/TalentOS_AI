@@ -28,12 +28,21 @@ import type { AIProvider } from '../providers/base-provider'
 import { jobDescriptionPrompt } from '../prompts/job-description'
 import { cvAnalysisPrompt, type CVAnalysisInput } from '../prompts/cv-analysis'
 import { candidateRankingPrompt, type CandidateRankingInput } from '../prompts/candidate-ranking'
+import {
+  buildInterviewKitSystemPrompt,
+  buildInterviewKitUserPrompt,
+  type InterviewKitPromptInput,
+} from '../prompts/interview-kit'
 import { jobDescriptionOutputSchema } from '../schemas/job-description.schema'
 import { cvAnalysisOutputSchema, type CVAnalysisOutput } from '../schemas/cv-analysis.schema'
 import {
   candidateRankingOutputSchema,
   type CandidateRankingOutput,
 } from '../schemas/candidate-ranking.schema'
+import {
+  interviewKitOutputSchema,
+  type InterviewKitOutput,
+} from '../schemas/interview-kit.schema'
 import {
   AIEngineError,
   NotImplementedError,
@@ -105,16 +114,26 @@ export class AIEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Not yet implemented — fail loudly so callers know to wait
+  // Sprint 7 — personalized interview kit
   // ---------------------------------------------------------------------------
 
-  generateInterviewKit(_input: {
-    role: string
-    level: string
-    jobDescription: string
-  }): Promise<never> {
-    return Promise.reject(new NotImplementedError('generateInterviewKit'))
+  /**
+   * Sprint 7 — generates a fully personalized interview kit (overview,
+   * candidate snapshot, opening/role-specific/skill-validation/gap-
+   * validation/behavioral/scenario/candidate-specific/closing questions,
+   * and a weighted scorecard). Pure AI generation. The application
+   * computes the final interview score deterministically.
+   */
+  async generateInterviewKit(
+    input: InterviewKitPromptInput
+  ): Promise<ProviderResult<InterviewKitOutput>> {
+    const userPrompt = buildInterviewKitUserPrompt(input)
+    return this.callInterviewKit(userPrompt)
   }
+
+  // ---------------------------------------------------------------------------
+  // Not yet implemented — fail loudly so callers know to wait
+  // ---------------------------------------------------------------------------
 
   generateOfferLetter(_input: {
     candidateName: string
@@ -174,6 +193,65 @@ export class AIEngine {
     }
 
     throw new SchemaValidationError(promptId, serializeZodError(lastError))
+  }
+
+  /**
+   * The interview-kit prompt is system + user. We inject a system prompt
+   * for the role + safety + output contract, and a user prompt with the
+   * full denormalized job + candidate + match context.
+   *
+   * The provider's `generateStructured` is called with a Zod schema for
+   * structural validation. On validation failure, we retry once with a
+   * corrective system message.
+   */
+  private async callInterviewKit(
+    userPrompt: string
+  ): Promise<ProviderResult<InterviewKitOutput>> {
+    const systemPrompt = buildInterviewKitSystemPrompt()
+    const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
+
+    const lastError: { value: unknown } = { value: null }
+    const maxAttempts = 2
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const promptToUse =
+        attempt === 1
+          ? fullPrompt
+          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+
+      try {
+        // We use `generate` (not `generateStructured`) for the interview
+        // kit because Gemini's responseJsonSchema rejects deeply nested
+        // objects. We force application/json and parse + Zod-validate the
+        // text manually. On validation failure, the next loop iteration
+        // injects a corrective system message.
+        const result = await this.provider.generate(promptToUse, {
+          responseMimeType: 'application/json',
+          temperature: 0.4,
+        })
+        let rawText = (result.data as string).trim()
+        // Strip a single leading/trailing markdown fence if the model
+        // emitted one despite the instructions.
+        rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+        let parsedJson: unknown
+        try {
+          parsedJson = JSON.parse(rawText)
+        } catch (jsonErr) {
+          lastError.value = jsonErr
+          continue
+        }
+        const parsed = interviewKitOutputSchema.safeParse(parsedJson)
+        if (parsed.success) {
+          return { ...result, data: parsed.data }
+        }
+        lastError.value = parsed.error
+      } catch (err) {
+        if (err instanceof AIEngineError) throw err
+        lastError.value = err
+      }
+    }
+
+    throw new SchemaValidationError('interview-kit', serializeZodError(lastError.value))
   }
 }
 
