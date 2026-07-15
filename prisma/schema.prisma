@@ -30,9 +30,11 @@ datasource db {
 
 enum UserRole {
   ADMIN
+  TA_LEAD
   RECRUITER
   HIRING_MANAGER
   INTERVIEWER
+  VIEWER
   CANDIDATE
 }
 
@@ -299,17 +301,19 @@ model Organization {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  departments     Department[]
-  users           User[]
-  hiringRequests  HiringRequest[]
-  jobDescriptions JobDescription[]
-  candidates      Candidate[]
-  activities      Activity[]
+  departments        Department[]
+  users              User[]
+  hiringRequests     HiringRequest[]
+  jobDescriptions    JobDescription[]
+  candidates         Candidate[]
+  activities         Activity[]
   candidateDecisions CandidateDecision[]
-  aiTasks         AITask[]
-  promptTemplates PromptTemplate[]
-  offers          Offer[]
-  interviews      Interview[]
+  aiTasks            AITask[]
+  promptTemplates    PromptTemplate[]
+  offers             Offer[]
+  interviews         Interview[]
+  invitations        Invitation[]
+  auditLogs          AuditLog[]
 
   @@index([slug])
 }
@@ -324,10 +328,10 @@ model Department {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  head            User?            @relation("DepartmentHead", fields: [headUserId], references: [id], onDelete: SetNull)
-  users           User[]           @relation("DepartmentMembers")
-  hiringRequests  HiringRequest[]
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  head           User?           @relation("DepartmentHead", fields: [headUserId], references: [id], onDelete: SetNull)
+  users          User[]          @relation("DepartmentMembers")
+  hiringRequests HiringRequest[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -335,39 +339,53 @@ model Department {
 }
 
 model User {
-  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String           @db.Uuid
-  departmentId   String?          @db.Uuid
-  email          String           @unique
-  firstName      String
-  lastName       String
-  avatarUrl      String?
-  jobTitle       String?
-  role           UserRole         @default(RECRUITER)
-  status         EmploymentStatus @default(ACTIVE)
-  phone          String?
-  location       String?
-  timezone       String?
-  bio            String?
-  lastLoginAt    DateTime?
-  emailVerified  DateTime?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String           @db.Uuid
+  departmentId      String?          @db.Uuid
+  email             String           @unique
+  firstName         String
+  lastName          String
+  avatarUrl         String?
+  jobTitle          String?
+  role              UserRole         @default(RECRUITER)
+  status            EmploymentStatus @default(ACTIVE)
+  phone             String?
+  location          String?
+  timezone          String?
+  bio               String?
+  /// Bcrypt hash of the user's password. NULL only for legacy users that
+  /// have not yet set a password (e.g. seeded accounts that must complete
+  /// the one-time bootstrap flow before they can log in).
+  passwordHash      String?
+  /// Timestamp the password was last changed. Bumping this invalidates
+  /// outstanding JWT sessions on their next request.
+  passwordChangedAt DateTime?
+  /// Timestamp the user was soft-disabled. NULL = active. Disabled users
+  /// cannot log in and any existing sessions are rejected on next request.
+  disabledAt        DateTime?
+  lastLoginAt       DateTime?
+  emailVerified     DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
-  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department          Department?          @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
-  headOfDepartments   Department[]         @relation("DepartmentHead")
-  hiringRequestsOwned HiringRequest[]      @relation("HiringRequestHiringManager")
-  hiringRequestsCreated HiringRequest[]    @relation("HiringRequestCreator")
-  scheduledInterviews Interview[]          @relation("InterviewScheduler")
+  organization            Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department              Department?            @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  headOfDepartments       Department[]           @relation("DepartmentHead")
+  hiringRequestsOwned     HiringRequest[]        @relation("HiringRequestHiringManager")
+  hiringRequestsCreated   HiringRequest[]        @relation("HiringRequestCreator")
+  scheduledInterviews     Interview[]            @relation("InterviewScheduler")
   interviewParticipations InterviewParticipant[] @relation("InterviewParticipantUser")
-  evaluationsGiven   InterviewEvaluation[]
-  candidateDecisions  CandidateDecision[] @relation("CandidateDecisionMaker")
-  activities          Activity[]
-  aiTasks             AITask[]
+  evaluationsGiven        InterviewEvaluation[]
+  candidateDecisions      CandidateDecision[]    @relation("CandidateDecisionMaker")
+  activities              Activity[]
+  aiTasks                 AITask[]
+  invitationsCreated      Invitation[]           @relation("InvitationCreator")
+  auditLogs               AuditLog[]             @relation("AuditLogActor")
+  authSessions            AuthSession[]
 
   @@index([organizationId])
   @@index([organizationId, role])
+  @@index([organizationId, status])
   @@index([departmentId])
   @@index([email])
 }
@@ -377,45 +395,45 @@ model User {
 // -----------------------------------------------------------------------------
 
 model HiringRequest {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String              @db.Uuid
-  departmentId    String              @db.Uuid
-  createdById     String              @db.Uuid
-  hiringManagerId String?             @db.Uuid
-  jobDescriptionId String?            @db.Uuid
-  title           String
-  slug            String
-  status          HiringRequestStatus @default(DRAFT)
-  priority        Priority            @default(MEDIUM)
-  jobType         JobType             @default(FULL_TIME)
-  workArrangement WorkArrangement     @default(ONSITE)
-  level           JobLevel            @default(MID)
-  openings        Int                 @default(1)
-  filled          Int                 @default(0)
-  location        String?
-  salaryMin       Int?
-  salaryMax       Int?
-  salaryCurrency  SalaryCurrency      @default(USD)
-  summary         String?
-  targetStartDate DateTime?
-  closingDate     DateTime?
-  publishedAt     DateTime?
-  closedAt        DateTime?
-  settings        Json                @default("{}")
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String              @db.Uuid
+  departmentId     String              @db.Uuid
+  createdById      String              @db.Uuid
+  hiringManagerId  String?             @db.Uuid
+  jobDescriptionId String?             @db.Uuid
+  title            String
+  slug             String
+  status           HiringRequestStatus @default(DRAFT)
+  priority         Priority            @default(MEDIUM)
+  jobType          JobType             @default(FULL_TIME)
+  workArrangement  WorkArrangement     @default(ONSITE)
+  level            JobLevel            @default(MID)
+  openings         Int                 @default(1)
+  filled           Int                 @default(0)
+  location         String?
+  salaryMin        Int?
+  salaryMax        Int?
+  salaryCurrency   SalaryCurrency      @default(USD)
+  summary          String?
+  targetStartDate  DateTime?
+  closingDate      DateTime?
+  publishedAt      DateTime?
+  closedAt         DateTime?
+  settings         Json                @default("{}")
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department     Department          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
-  createdBy      User                @relation("HiringRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  hiringManager  User?               @relation("HiringRequestHiringManager", fields: [hiringManagerId], references: [id], onDelete: SetNull)
-  jobDescription JobDescription?     @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
-  candidates     Candidate[]
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department         Department          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  createdBy          User                @relation("HiringRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  hiringManager      User?               @relation("HiringRequestHiringManager", fields: [hiringManagerId], references: [id], onDelete: SetNull)
+  jobDescription     JobDescription?     @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
+  candidates         Candidate[]
   candidateDecisions CandidateDecision[]
-  interviews     Interview[]
-  offers         Offer[]
-  activities     Activity[]
-  aiTasks        AITask[]
+  interviews         Interview[]
+  offers             Offer[]
+  activities         Activity[]
+  aiTasks            AITask[]
 
   @@unique([organizationId, slug])
   @@index([organizationId, status])
@@ -426,25 +444,25 @@ model HiringRequest {
 }
 
 model JobDescription {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String   @db.Uuid
-  title          String
-  isTemplate     Boolean  @default(false)
-  level          JobLevel @default(MID)
-  jobType        JobType  @default(FULL_TIME)
-  summary        String?
-  description    String   @db.Text
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String   @db.Uuid
+  title            String
+  isTemplate       Boolean  @default(false)
+  level            JobLevel @default(MID)
+  jobType          JobType  @default(FULL_TIME)
+  summary          String?
+  description      String   @db.Text
   responsibilities String[] @default([])
-  requiredSkills String[] @default([])
-  niceToHave     String[] @default([])
-  perks          String[] @default([])
-  settings       Json     @default("{}")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  requiredSkills   String[] @default([])
+  niceToHave       String[] @default([])
+  perks            String[] @default([])
+  settings         Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  hiringRequests  HiringRequest[]
-  aiTasks         AITask[]
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  hiringRequests HiringRequest[]
+  aiTasks        AITask[]
 
   @@index([organizationId, isTemplate])
   @@index([organizationId, title])
@@ -456,9 +474,9 @@ model JobDescription {
 // -----------------------------------------------------------------------------
 
 model Candidate {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String          @db.Uuid
-  hiringRequestId String          @db.Uuid
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @db.Uuid
+  hiringRequestId String           @db.Uuid
   firstName       String
   lastName        String
   email           String
@@ -470,14 +488,14 @@ model Candidate {
   portfolioUrl    String?
   avatarUrl       String?
   headline        String?
-  summary         String?         @db.Text
+  summary         String?          @db.Text
   currentTitle    String?
   currentCompany  String?
   yearsExperience Int?
-  status          CandidateStatus @default(ACTIVE)
+  status          CandidateStatus  @default(ACTIVE)
   stage           ApplicationStage @default(APPLIED)
-  rating          Int             @default(0) // 0-5 stars
-  source          String?         // e.g. "Referral", "LinkedIn", "Company Site"
+  rating          Int              @default(0) // 0-5 stars
+  source          String? // e.g. "Referral", "LinkedIn", "Company Site"
   sourceDetails   String?
 
   // AI match analysis (Sprint 6)
@@ -487,35 +505,35 @@ model Candidate {
   // user-facing string ("Strong Match" | "Good Match" | "Potential Match" |
   // "Weak Match" | "Not Recommended"). Strengths/gaps/concerns are string
   // arrays produced by the AI engine.
-  matchScore             Int?
-  matchScoreBreakdown    Json?
-  recommendation         String?
-  recommendationReasoning String?  @db.Text
-  strengths              String[] @default([])
-  gaps                   String[] @default([])
-  concerns               String[] @default([])
-  analyzedAt             DateTime?
+  matchScore              Int?
+  matchScoreBreakdown     Json?
+  recommendation          String?
+  recommendationReasoning String?   @db.Text
+  strengths               String[]  @default([])
+  gaps                    String[]  @default([])
+  concerns                String[]  @default([])
+  analyzedAt              DateTime?
 
-  appliedAt       DateTime        @default(now())
-  lastActivityAt  DateTime        @default(now())
-  rejectedAt      DateTime?
-  rejectedReason  String?
-  hiredAt         DateTime?
-  withdrawnAt     DateTime?
-  metadata        Json            @default("{}")
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  appliedAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  rejectedAt     DateTime?
+  rejectedReason String?
+  hiredAt        DateTime?
+  withdrawnAt    DateTime?
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  hiringRequest   HiringRequest       @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
-  skills          CandidateSkill[]
-  experiences     CandidateExperience[]
-  educations      CandidateEducation[]
-  certifications  CandidateCertification[]
-  cvFiles         CVFile[]
-  interviews      Interview[]
-  offers          Offer[]
-  activities      Activity[]
+  organization       Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  hiringRequest      HiringRequest            @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  skills             CandidateSkill[]
+  experiences        CandidateExperience[]
+  educations         CandidateEducation[]
+  certifications     CandidateCertification[]
+  cvFiles            CVFile[]
+  interviews         Interview[]
+  offers             Offer[]
+  activities         Activity[]
   candidateDecisions CandidateDecision[]
 
   @@unique([organizationId, email, hiringRequestId])
@@ -585,16 +603,16 @@ model CandidateEducation {
 }
 
 model CandidateCertification {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  candidateId String    @db.Uuid
-  name        String
-  issuer      String
-  issueDate   DateTime?
-  expiryDate  DateTime?
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateId  String    @db.Uuid
+  name         String
+  issuer       String
+  issueDate    DateTime?
+  expiryDate   DateTime?
   credentialId String?
-  url         String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  url          String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
@@ -604,19 +622,19 @@ model CandidateCertification {
 }
 
 model CVFile {
-  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  candidateId   String     @db.Uuid
-  fileType      CVFileType
-  fileName      String
-  fileSize      Int        // bytes
-  storageUrl    String
-  storagePath   String?
-  mimeType      String?
-  parsedText    String?    @db.Text
-  parsedData    Json?      // structured fields extracted from the CV
-  uploadedAt    DateTime   @default(now())
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateId String     @db.Uuid
+  fileType    CVFileType
+  fileName    String
+  fileSize    Int // bytes
+  storageUrl  String
+  storagePath String?
+  mimeType    String?
+  parsedText  String?    @db.Text
+  parsedData  Json? // structured fields extracted from the CV
+  uploadedAt  DateTime   @default(now())
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
@@ -628,22 +646,22 @@ model CVFile {
 // -----------------------------------------------------------------------------
 
 model Interview {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String          @db.Uuid
-  hiringRequestId String          @db.Uuid
-  candidateId     String          @db.Uuid
-  scheduledById   String?         @db.Uuid
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @db.Uuid
+  hiringRequestId String           @db.Uuid
+  candidateId     String           @db.Uuid
+  scheduledById   String?          @db.Uuid
   type            InterviewType
   title           String
-  description     String?         @db.Text
-  status          InterviewStatus @default(SCHEDULED)
+  description     String?          @db.Text
+  status          InterviewStatus  @default(SCHEDULED)
   scheduledAt     DateTime
-  durationMinutes Int             @default(60)
+  durationMinutes Int              @default(60)
   location        String?
   meetingUrl      String?
   stage           ApplicationStage @default(INTERVIEW)
-  round           Int             @default(1)
-  notes           String?         @db.Text
+  round           Int              @default(1)
+  notes           String?          @db.Text
   cancelledReason String?
   completedAt     DateTime?
   /// Sprint 7: AI-generated interview kit snapshot (questions, scorecard
@@ -652,17 +670,17 @@ model Interview {
   kitSnapshot     Json?
   /// Sprint 7: when the interviewer opened the kit to start the session.
   startedAt       DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
-  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  hiringRequest  HiringRequest           @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
-  candidate      Candidate               @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  scheduledBy    User?                   @relation("InterviewScheduler", fields: [scheduledById], references: [id], onDelete: SetNull)
-  participants   InterviewParticipant[]
-  questions      InterviewQuestion[]
-  evaluations    InterviewEvaluation[]
-  activities     Activity[]
+  organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  hiringRequest HiringRequest          @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  candidate     Candidate              @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  scheduledBy   User?                  @relation("InterviewScheduler", fields: [scheduledById], references: [id], onDelete: SetNull)
+  participants  InterviewParticipant[]
+  questions     InterviewQuestion[]
+  evaluations   InterviewEvaluation[]
+  activities    Activity[]
 
   @@index([organizationId])
   @@index([hiringRequestId, scheduledAt])
@@ -675,7 +693,7 @@ model InterviewParticipant {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   interviewId String   @db.Uuid
   userId      String   @db.Uuid
-  role        String?  // e.g. "Lead", "Shadow", "Hiring Manager"
+  role        String? // e.g. "Lead", "Shadow", "Hiring Manager"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -688,30 +706,30 @@ model InterviewParticipant {
 }
 
 model InterviewQuestion {
-  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  interviewId String            @db.Uuid
-  category    String
-  type        QuestionType
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interviewId            String             @db.Uuid
+  category               String
+  type                   QuestionType
   /// Sprint 7: where this question sits in the interview flow.
-  purpose     QuestionPurpose  @default(ROLE_SPECIFIC)
-  difficulty  QuestionDifficulty @default(MEDIUM)
-  question    String             @db.Text
+  purpose                QuestionPurpose    @default(ROLE_SPECIFIC)
+  difficulty             QuestionDifficulty @default(MEDIUM)
+  question               String             @db.Text
   /// Why this question is being asked for THIS candidate.
-  whyThisQuestion        String?  @db.Text
+  whyThisQuestion        String?            @db.Text
   /// What competency or skill this question evaluates.
-  whatItEvaluates        String?  @db.Text
+  whatItEvaluates        String?            @db.Text
   /// Observable indicators of a strong answer.
-  strongAnswerIndicators String?  @db.Text
+  strongAnswerIndicators String?            @db.Text
   /// Red flags / weak signals to watch for.
-  redFlags               String?  @db.Text
+  redFlags               String?            @db.Text
   /// Suggested follow-up to dig deeper.
-  suggestedFollowUp      String?  @db.Text
-  expectedAnswer String?         @db.Text
-  notes       String?            @db.Text
-  order       Int               @default(0)
-  askedAt     DateTime?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  suggestedFollowUp      String?            @db.Text
+  expectedAnswer         String?            @db.Text
+  notes                  String?            @db.Text
+  order                  Int                @default(0)
+  askedAt                DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
@@ -721,30 +739,30 @@ model InterviewQuestion {
 }
 
 model InterviewEvaluation {
-  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  interviewId     String                  @db.Uuid
-  evaluatorId     String                  @db.Uuid
-  overallScore    Int                     // 1-5
-  technicalScore  Int?
-  communicationScore Int?
-  cultureFitScore Int?
+  id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interviewId         String                   @db.Uuid
+  evaluatorId         String                   @db.Uuid
+  overallScore        Int // 1-5
+  technicalScore      Int?
+  communicationScore  Int?
+  cultureFitScore     Int?
   problemSolvingScore Int?
   /// Sprint 7: deterministic interview score (0–100) computed by the
   /// application from criterion scores and weights, NOT by Gemini.
-  interviewScore  Int?
+  interviewScore      Int?
   /// Sprint 7: per-criterion scores, keyed by criterion name. JSON to
   /// support flexible scorecards (different jobs generate different
   /// criteria).
-  criterionScores Json?
-  strengths       String?                 @db.Text
-  weaknesses      String?                 @db.Text
+  criterionScores     Json?
+  strengths           String?                  @db.Text
+  weaknesses          String?                  @db.Text
   /// Sprint 7: free-form observations the interviewer wants to keep.
-  overallNotes    String?                 @db.Text
-  recommendation  EvaluationRecommendation
-  summary         String?                 @db.Text
-  submittedAt     DateTime                @default(now())
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  overallNotes        String?                  @db.Text
+  recommendation      EvaluationRecommendation
+  summary             String?                  @db.Text
+  submittedAt         DateTime                 @default(now())
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   evaluator User      @relation(fields: [evaluatorId], references: [id], onDelete: Restrict)
@@ -759,17 +777,17 @@ model InterviewEvaluation {
 // -----------------------------------------------------------------------------
 
 model Offer {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String      @db.Uuid
-  hiringRequestId String      @db.Uuid
-  candidateId     String      @db.Uuid
-  status          OfferStatus @default(DRAFT)
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String         @db.Uuid
+  hiringRequestId String         @db.Uuid
+  candidateId     String         @db.Uuid
+  status          OfferStatus    @default(DRAFT)
   title           String
   salaryAmount    Int
   salaryCurrency  SalaryCurrency @default(USD)
-  salaryPeriod    String      @default("annual") // annual, monthly, hourly
+  salaryPeriod    String         @default("annual") // annual, monthly, hourly
   bonusAmount     Int?
-  equityAmount    String?     // free-form e.g. "0.05% over 4 years"
+  equityAmount    String? // free-form e.g. "0.05% over 4 years"
   startDate       DateTime?
   expiresAt       DateTime?
   sentAt          DateTime?
@@ -777,10 +795,10 @@ model Offer {
   acceptedAt      DateTime?
   declinedAt      DateTime?
   declineReason   String?
-  notes           String?     @db.Text
+  notes           String?        @db.Text
   documentUrl     String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   hiringRequest HiringRequest @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
@@ -798,28 +816,28 @@ model Offer {
 // -----------------------------------------------------------------------------
 
 model Activity {
-  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String        @db.Uuid
-  type            ActivityType
-  actorId         String?       @db.Uuid
-  candidateId     String?       @db.Uuid
-  hiringRequestId String?       @db.Uuid
-  interviewId     String?       @db.Uuid
-  offerId         String?       @db.Uuid
-  candidateDecisionId String?   @db.Uuid
-  title           String
-  description     String?       @db.Text
-  metadata        Json          @default("{}")
-  occurredAt      DateTime      @default(now())
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String       @db.Uuid
+  type                ActivityType
+  actorId             String?      @db.Uuid
+  candidateId         String?      @db.Uuid
+  hiringRequestId     String?      @db.Uuid
+  interviewId         String?      @db.Uuid
+  offerId             String?      @db.Uuid
+  candidateDecisionId String?      @db.Uuid
+  title               String
+  description         String?      @db.Text
+  metadata            Json         @default("{}")
+  occurredAt          DateTime     @default(now())
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
-  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  actor         User?          @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  candidate     Candidate?     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  hiringRequest HiringRequest? @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
-  interview     Interview?     @relation(fields: [interviewId], references: [id], onDelete: Cascade)
-  offer         Offer?         @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor             User?              @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  candidate         Candidate?         @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  hiringRequest     HiringRequest?     @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  interview         Interview?         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  offer             Offer?             @relation(fields: [offerId], references: [id], onDelete: Cascade)
   candidateDecision CandidateDecision? @relation(fields: [candidateDecisionId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, occurredAt])
@@ -834,31 +852,31 @@ model Activity {
 // -----------------------------------------------------------------------------
 
 model AITask {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String       @db.Uuid
-  hiringRequestId String?      @db.Uuid
-  jobDescriptionId String?     @db.Uuid
-  createdById     String?      @db.Uuid
-  type            AITaskType
-  title           String
-  status          AITaskStatus @default(PENDING)
-  prompt          String       @db.Text
-  result          Json?
-  errorMessage    String?
-  metadata        Json          @default("{}")
-  inputTokens     Int?
-  outputTokens    Int?
-  modelUsed       String?
-  durationMs      Int?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String       @db.Uuid
+  hiringRequestId  String?      @db.Uuid
+  jobDescriptionId String?      @db.Uuid
+  createdById      String?      @db.Uuid
+  type             AITaskType
+  title            String
+  status           AITaskStatus @default(PENDING)
+  prompt           String       @db.Text
+  result           Json?
+  errorMessage     String?
+  metadata         Json         @default("{}")
+  inputTokens      Int?
+  outputTokens     Int?
+  modelUsed        String?
+  durationMs       Int?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  hiringRequest  HiringRequest?  @relation(fields: [hiringRequestId], references: [id], onDelete: SetNull)
-  jobDescription JobDescription? @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
-  createdBy      User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  hiringRequest  HiringRequest?   @relation(fields: [hiringRequestId], references: [id], onDelete: SetNull)
+  jobDescription JobDescription?  @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
+  createdBy      User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
   conversations  AIConversation[]
 
   @@index([organizationId, status])
@@ -868,14 +886,14 @@ model AITask {
 }
 
 model AIConversation {
-  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  taskId      String               @db.Uuid
-  role        AIConversationRole
-  content     String               @db.Text
-  tokens      Int?
-  metadata    Json                 @default("{}")
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId    String             @db.Uuid
+  role      AIConversationRole
+  content   String             @db.Text
+  tokens    Int?
+  metadata  Json               @default("{}")
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
   task AITask @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
@@ -883,17 +901,17 @@ model AIConversation {
 }
 
 model PromptTemplate {
-  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String?               @db.Uuid
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String?                @db.Uuid
   name           String
   description    String?
   category       PromptTemplateCategory
-  body           String                @db.Text
-  variables      Json                  @default("[]")
-  isPublic       Boolean               @default(false)
-  version        Int                   @default(1)
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  body           String                 @db.Text
+  variables      Json                   @default("[]")
+  isPublic       Boolean                @default(false)
+  version        Int                    @default(1)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -925,14 +943,124 @@ model CandidateDecision {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  candidate     Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  hiringRequest HiringRequest  @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
-  decidedBy     User           @relation("CandidateDecisionMaker", fields: [decidedById], references: [id], onDelete: Restrict)
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidate     Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  hiringRequest HiringRequest @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  decidedBy     User          @relation("CandidateDecisionMaker", fields: [decidedById], references: [id], onDelete: Restrict)
   activities    Activity[]
 
   @@unique([candidateId, hiringRequestId])
   @@index([organizationId])
   @@index([hiringRequestId, decision])
   @@index([candidateId])
+}
+
+// -----------------------------------------------------------------------------
+// Sprint 9 — Identity, Authentication, RBAC, Multi-Tenancy, Security
+// -----------------------------------------------------------------------------
+
+/// Invitation to join an Organization with a specific role.
+///
+/// Sprint 9 PART 16: ADMIN and authorized TA_LEAD users can invite teammates.
+/// Tokens are generated via `crypto.randomBytes(32)`, and only a SHA-256 hash
+/// of the token is stored in the database. The plaintext token is returned
+/// ONCE to the inviter (because no email infrastructure is configured yet).
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model Invitation {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String           @db.Uuid
+  email          String
+  role           UserRole
+  status         InvitationStatus @default(PENDING)
+  /// SHA-256 hash of the raw invitation token. The plaintext is only
+  /// available to the inviter at creation time and to the recipient when
+  /// they accept the invitation. We never persist the plaintext.
+  tokenHash      String           @unique
+  /// Prefix of the raw token (first 8 chars) shown in the UI so admins
+  /// can identify invitations without revealing the secret. Used only for
+  /// display in the "Pending Invitations" list.
+  tokenPrefix    String
+  invitedById    String           @db.Uuid
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  acceptedById   String?          @db.Uuid
+  revokedAt      DateTime?
+  revokedById    String?          @db.Uuid
+  /// Optional one-time message from the inviter.
+  message        String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationCreator", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status])
+  @@index([email])
+  @@index([expiresAt])
+}
+
+/// Security audit log. Separate from the business `Activity` model so that
+/// security events (login attempts, role changes, denied access) can never
+/// be conflated with hiring activity, can be reviewed independently, and
+/// are append-only from the application's perspective.
+///
+/// PART 20: stores actor, organization, action, target, timestamp, and
+/// safe metadata. NEVER store: passwords, raw session tokens, plaintext
+/// invitation tokens, API keys, or CV content.
+model AuditLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String?  @db.Uuid
+  actorId        String?  @db.Uuid
+  action         String // e.g. LOGIN_SUCCESS, LOGIN_FAILURE, INVITATION_CREATED
+  /// Target type, e.g. "user", "invitation", "candidate", "hiring_request"
+  targetType     String?
+  /// Target ID (when the target is in the same organization)
+  targetId       String?
+  /// Outcome: "success" | "failure" | "denied"
+  outcome        String   @default("success")
+  /// Free-form reason (e.g. "invalid_password", "user_disabled", "tenant_mismatch")
+  reason         String?
+  /// Safe metadata (request ID, IP, user agent — but never secrets).
+  metadata       Json     @default("{}")
+  occurredAt     DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor        User?         @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([action, occurredAt])
+  @@index([targetType, targetId])
+}
+
+/// Server-side session record. With Auth.js JWT strategy the JWT itself is
+/// the source of truth, but we keep a DB row so that:
+///   1. ADMIN can revoke an individual session (kills the row, JWT becomes
+///      invalid even though its signature is still valid).
+///   2. We can list active sessions per user in the Security settings page.
+///   3. Disabled users can be logged out globally by deleting their rows.
+model AuthSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @db.Uuid
+  /// SHA-256 hash of the session token. The raw cookie value is never stored.
+  sessionTokenHash String    @unique
+  /// JWT `jti` claim (unique identifier) so we can map a JWT back to this row.
+  jwtId            String?   @unique
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }

@@ -7,6 +7,8 @@
  */
 
 import { db } from '@/lib/db'
+import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
 import { findInterviewQuestion, markInterviewQuestionAsked } from '../repositories/interview-repository'
 import type { ActionResult, MarkQuestionAskedInput } from '../types'
 
@@ -14,8 +16,19 @@ export async function markInterviewQuestionAskedAction(
   input: MarkQuestionAskedInput
 ): Promise<ActionResult<{ askedAt: string | null }>> {
   try {
-    const question = await findInterviewQuestion(input.questionId)
+    // Sprint 9 PART 13: interview.evaluate. PART 11: INTERVIEWER can only
+    // annotate interviews they participate in.
+    const auth = await requirePermission('interview.evaluate')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const question = await db.interviewQuestion.findFirst({
+      where: { id: input.questionId, interview: { organizationId: orgId } },
+      include: { interview: { include: { participants: { select: { userId: true } } } } },
+    })
     if (!question) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Question not found.', retryable: false } }
+    }
+    if (auth.data.role === 'INTERVIEWER' && !question.interview.participants.some(p => p.userId === auth.data.userId)) {
       return { ok: false, error: { code: 'NOT_FOUND', message: 'Question not found.', retryable: false } }
     }
     const askedAt = input.asked ? new Date() : null
@@ -33,11 +46,19 @@ export async function markInterviewStartedAction(
   interviewId: string
 ): Promise<ActionResult<{ startedAt: string }>> {
   try {
-    const interview = await db.interview.findUnique({
-      where: { id: interviewId },
-      select: { id: true, candidateId: true, status: true, startedAt: true },
+    // Sprint 9 PART 13: interview.schedule. PART 11: INTERVIEWER can only
+    // start interviews they participate in.
+    const auth = await requirePermission('interview.schedule')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const interview = await db.interview.findFirst({
+      where: { id: interviewId, organizationId: orgId },
+      include: { participants: { select: { userId: true } } },
     })
     if (!interview) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
+    }
+    if (auth.data.role === 'INTERVIEWER' && !interview.participants.some(p => p.userId === auth.data.userId)) {
       return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
     }
     if (interview.startedAt) {

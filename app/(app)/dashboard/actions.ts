@@ -10,6 +10,7 @@
  */
 
 import { db } from '@/lib/db'
+import { requireAuth } from '@/lib/auth'
 
 export interface DashboardData {
   positions: Array<{
@@ -34,8 +35,19 @@ export interface DashboardData {
   }>
 }
 
+const EMPTY_DASHBOARD: DashboardData = {
+  positions: [],
+  candidatesByStage: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
+  metrics: [],
+  activities: [],
+}
+
 export async function getDashboardDataAction(): Promise<DashboardData> {
-  const orgId = await getDefaultOrgId()
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    return EMPTY_DASHBOARD
+  }
+  const orgId = auth.data.organizationId
 
   const [positions, candidateGroups, activities] = await Promise.all([
     db.hiringRequest.findMany({
@@ -128,8 +140,4 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
   }
 }
 
-async function getDefaultOrgId(): Promise<string> {
-  const org = await db.organization.findFirst({ select: { id: true } })
-  if (!org) throw new Error('No organization found. Run `pnpm db:seed` first.')
-  return org.id
-}
+

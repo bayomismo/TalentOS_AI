@@ -119,9 +119,9 @@ const CANDIDATE_INCLUDE = {
 // Read helpers
 // -----------------------------------------------------------------------------
 
-export async function findHiringRequestForDecisionHub(hiringRequestId: string) {
-  return db.hiringRequest.findUnique({
-    where: { id: hiringRequestId },
+export async function findHiringRequestForDecisionHub(hiringRequestId: string, organizationId?: string) {
+  return db.hiringRequest.findFirst({
+    where: { id: hiringRequestId, ...(organizationId ? { organizationId } : {}) },
     include: {
       department: { select: { name: true } },
       hiringManager: { select: { firstName: true, lastName: true } },
@@ -303,8 +303,8 @@ export interface RecordDecisionRow {
   candidateId: string
   hiringRequestId: string
   decision: 'ADVANCE' | 'HOLD' | 'REJECT' | 'SELECTED'
-  notes: string
-  reason: string | null
+  notes?: string
+  reason?: string | null
   decidedById: string
 }
 
@@ -346,7 +346,7 @@ export async function createDecisionActivity(args: {
     | 'CANDIDATE_REJECTED'
     | 'CANDIDATE_ADVANCED'
   actorId: string
-  candidateId: string
+  candidateId: string | null
   hiringRequestId: string
   candidateDecisionId?: string
   title: string
@@ -365,6 +365,10 @@ export async function createDecisionActivity(args: {
       description: args.description,
       metadata: (args.metadata ?? {}) as object,
     },
+    include: {
+      actor: { select: { firstName: true, lastName: true } },
+      candidate: { select: { firstName: true, lastName: true } },
+    },
   })
 }
 
@@ -372,8 +376,8 @@ export async function createDecisionActivity(args: {
 // View builders
 // -----------------------------------------------------------------------------
 
-export async function buildDecisionHubView(hiringRequestId: string): Promise<DecisionHubView | null> {
-  const hr = await findHiringRequestForDecisionHub(hiringRequestId)
+export async function buildDecisionHubView(hiringRequestId: string, organizationId: string): Promise<DecisionHubView | null> {
+  const hr = await findHiringRequestForDecisionHub(hiringRequestId, organizationId)
   if (!hr) return null
   const [candRows, counts, activities, latestBrief] = await Promise.all([
     listDecisionHubCandidates(hiringRequestId),
@@ -411,12 +415,13 @@ export async function buildDecisionHubView(hiringRequestId: string): Promise<Dec
 
 export async function buildComparisonView(
   hiringRequestId: string,
+  organizationId: string,
   candidateIds: string[]
 ): Promise<ComparisonView | null> {
   if (candidateIds.length < 2 || candidateIds.length > 4) {
     return null
   }
-  const hr = await findHiringRequestForDecisionHub(hiringRequestId)
+  const hr = await findHiringRequestForDecisionHub(hiringRequestId, organizationId)
   if (!hr) return null
   const [candRows, latestBrief] = await Promise.all([
     getCandidatesByIdsForComparison(hiringRequestId, candidateIds),
@@ -450,6 +455,3 @@ function sameSet(a: string[], b: string[]): boolean {
   return true
 }
 
-export async function getDefaultActorIdForOrg(orgId: string): Promise<string> {
-  return getDefaultActorId(orgId)
-}

@@ -15,6 +15,8 @@ import {
 } from '../repositories/interview-repository'
 import { kitQuestionToView } from '../mappers/interview-mappers'
 import { db } from '@/lib/db'
+import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
 import { getEventBus } from '@/lib/events'
 import type {
   ActionResult,
@@ -47,6 +49,29 @@ async function resolveNames(userIds: string[]): Promise<string[]> {
 export async function getInterviewKitAction(
   interviewId: string
 ): Promise<ActionResult<InterviewKitView>> {
+  // Sprint 9 PART 13: interview.view. Tenant-scoped.
+  const auth = await requirePermission('interview.view')
+  if (!auth.ok) return toActionFailure(auth)
+  // PART 11: INTERVIEWER can only see interviews where they participate.
+  // Admin/TA_LEAD/Recruiter/HM/Viewer can see all in the org.
+  const orgId = auth.data.organizationId
+  if (auth.data.role === 'INTERVIEWER') {
+    const participant = await db.interviewParticipant.findFirst({
+      where: { interviewId, userId: auth.data.userId },
+      select: { id: true },
+    })
+    if (!participant) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
+    }
+  } else {
+    const interview = await db.interview.findFirst({
+      where: { id: interviewId, organizationId: orgId },
+      select: { id: true },
+    })
+    if (!interview) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
+    }
+  }
   return buildInterviewKitView(interviewId)
 }
 
@@ -58,7 +83,20 @@ export async function getCandidateInterviewsAction(
   candidateId: string
 ): Promise<ActionResult<{ items: CandidateInterviewListItem[] }>> {
   try {
-    const rows = await listInterviewsForCandidate(candidateId)
+    // Sprint 9 PART 13: candidate.view. Tenant-scoped. PART 11: INTERVIEWER
+    // can only see interviews where they participate.
+    const auth = await requirePermission('candidate.view')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const candidate = await db.candidate.findFirst({ where: { id: candidateId, organizationId: orgId }, select: { id: true } })
+    if (!candidate) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Candidate not found.', retryable: false } }
+    }
+    let rows = await listInterviewsForCandidate(candidateId)
+    if (auth.data.role === 'INTERVIEWER') {
+      const userId = auth.data.userId
+      rows = rows.filter(r => r.participants.some(p => p.userId === userId))
+    }
     const items: CandidateInterviewListItem[] = rows.map(r => {
       const evalRow = r.evaluations[0]
       return {
@@ -91,11 +129,22 @@ export async function getCandidateInterviewsAction(
 
 export async function getInterviewCenterAction(): Promise<ActionResult<InterviewCenterData>> {
   try {
+    // Sprint 9 PART 13: interview.view. Tenant-scoped. PART 11: INTERVIEWER
+    // sees only their own interviews.
+    const auth = await requirePermission('interview.view')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
     const now = new Date()
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
     const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
 
-    const rows = await listAllInterviewsForCenter()
+    const allRows = await listAllInterviewsForCenter()
+    // Sprint 9 PART 6: tenant scope. PART 11: INTERVIEWER sees only their
+    // own interviews. PART 21: do not leak that an interview exists in
+    // another org.
+    const rows = allRows
+      .filter(r => r.organizationId === orgId)
+      .filter(r => auth.data.role === 'INTERVIEWER' ? r.participants.some(p => p.userId === auth.data.userId) : true)
 
     const toItem = (r: typeof rows[number]): CandidateInterviewListItem => {
       const e = r.evaluations[0]

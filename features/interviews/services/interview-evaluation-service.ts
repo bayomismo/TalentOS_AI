@@ -19,17 +19,6 @@ import { markInterviewCompleted } from '../repositories/interview-repository'
 import type { SubmitEvaluationInput } from '../types'
 import type { InterviewKitOutput } from '@/lib/ai/schemas/interview-kit.schema'
 
-async function getDefaultActorId(orgId: string): Promise<string> {
-  const user = await db.user.findFirst({
-    where: { organizationId: orgId, role: 'ADMIN' },
-    select: { id: true },
-  })
-  if (user) return user.id
-  const any = await db.user.findFirst({ where: { organizationId: orgId }, select: { id: true } })
-  if (!any) throw new Error('No user in organization. Run pnpm db:seed first.')
-  return any.id
-}
-
 function activitySnapshot(a: {
   id: string
   type: string
@@ -48,7 +37,7 @@ function activitySnapshot(a: {
   }
 }
 
-export async function submitEvaluationService(input: SubmitEvaluationInput): Promise<
+export async function submitEvaluationService(input: SubmitEvaluationInput & { evaluatorId?: string }): Promise<
   { ok: true; data: { evaluationId: string; interviewScore: number } } |
   { ok: false; error: { code: string; message: string; retryable?: boolean; details?: unknown } }
 > {
@@ -93,7 +82,10 @@ export async function submitEvaluationService(input: SubmitEvaluationInput): Pro
       }
     }
 
-    const actorId = await getDefaultActorId(interview.candidate.organizationId)
+    // Sprint 9: use the provided evaluatorId (from the auth context in the
+    // action layer) instead of guessing via getDefaultActorId. Falls back to
+    // the org admin for local scripts that call the service directly.
+    const actorId = input.evaluatorId ?? (await getDefaultActorId(interview.candidate.organizationId))
     const evaluation = await createEvaluation({
       interviewId: interview.id,
       evaluatorId: actorId,
@@ -165,4 +157,18 @@ export async function submitEvaluationService(input: SubmitEvaluationInput): Pro
       },
     }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Dev fallback (LOCAL SCRIPTS ONLY)
+// -----------------------------------------------------------------------------
+async function getDefaultActorId(orgId: string): Promise<string> {
+  const user = await db.user.findFirst({
+    where: { organizationId: orgId, role: 'ADMIN', status: 'ACTIVE', disabledAt: null, passwordHash: { not: null } },
+    select: { id: true },
+  })
+  if (user) return user.id
+  const any = await db.user.findFirst({ where: { organizationId: orgId }, select: { id: true } })
+  if (!any) throw new Error('No user in organization. Run pnpm db:seed first.')
+  return any.id
 }

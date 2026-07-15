@@ -30,6 +30,9 @@ import type {
   ActivitySnapshot,
 } from '@/lib/events/types'
 import { slugify } from '@/lib/utils'
+import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
+import { safeRevalidate } from '@/lib/utils/revalidate'
 import type { JobDescriptionOutput } from '@/lib/ai/schemas/job-description.schema'
 
 // -----------------------------------------------------------------------------
@@ -66,11 +69,14 @@ export async function generateJobDescriptionAction(
   input: GenerateJobDescriptionInput
 ): Promise<ActionResult<GenerateJobDescriptionSuccess>> {
   try {
+    // Sprint 9 PART 13: every AI action requires ai.generate_job_description.
+    const auth = await requirePermission('ai.generate_job_description')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
+
     const engine = getAIEngine()
     const result = await engine.generateJobDescription(input)
-
-    const orgId = await getDefaultOrgId()
-    const actorId = await getDefaultActorId(orgId)
 
     // Persist the AITask so the wizard run is attributable + auditable.
     const aiTask = await db.aITask.create({
@@ -141,9 +147,23 @@ export async function createHiringRequestAction(
   input: CreateHiringRequestInput
 ): Promise<ActionResult<CreateHiringRequestSuccess>> {
   try {
-    const orgId = await getDefaultOrgId()
-    const ctx = await getDefaultContext(orgId)
+    // Sprint 9: requires hiring_request.create.
+    const auth = await requirePermission('hiring_request.create')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
     const { draft, aiTaskId } = input
+
+    // Validate the referenced AITask (if any) belongs to this org — IDOR guard.
+    if (aiTaskId) {
+      const owned = await db.aITask.findFirst({
+        where: { id: aiTaskId, organizationId: orgId },
+        select: { id: true },
+      })
+      if (!owned) {
+        return { ok: false, error: { code: 'TENANT_MISMATCH', message: 'AI task not found', retryable: false } }
+      }
+    }
 
     // Find or create the department named by the wizard.
     const departmentSlug = slugify(draft.meta.department || 'engineering') || 'engineering'
@@ -180,8 +200,8 @@ export async function createHiringRequestAction(
       data: {
         organizationId: orgId,
         departmentId: department.id,
-        createdById: ctx.userId,
-        hiringManagerId: ctx.userId,
+        createdById: actorId,
+        hiringManagerId: actorId,
         jobDescriptionId: jobDescription.id,
         title: draft.title,
         slug,
@@ -203,7 +223,7 @@ export async function createHiringRequestAction(
       data: {
         organizationId: orgId,
         type: 'HIRING_REQUEST_CREATED',
-        actorId: ctx.userId,
+        actorId: actorId,
         hiringRequestId: hiringRequest.id,
         title: `New hiring request — ${hiringRequest.title}`,
         description: `Created via AI Recruiter. ${hiringRequest.openings} opening(s) in ${department.name}.`,
@@ -264,7 +284,10 @@ export async function saveHiringRequestDraftAction(
   input: SaveDraftInput
 ): Promise<ActionResult<SaveDraftSuccess>> {
   try {
-    const orgId = await getDefaultOrgId()
+    // Sprint 9: saving a draft is a hiring_request.create.
+    const auth = await requirePermission('hiring_request.create')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
     const { draft } = input
     const jobDescription = await db.jobDescription.create({
       data: {
@@ -301,40 +324,6 @@ function actionError(err: unknown): ActionResult<never> {
   const message = err instanceof Error ? err.message : 'Unexpected error'
   console.error('[ai-recruiter] action error:', err)
   return { ok: false, error: { code: 'INTERNAL', message, retryable: true } }
-}
-
-async function getDefaultOrgId(): Promise<string> {
-  const org = await db.organization.findFirst({ select: { id: true } })
-  if (!org) throw new Error('No organization found. Run `pnpm db:seed` first.')
-  return org.id
-}
-
-async function getDefaultActorId(orgId: string): Promise<string> {
-  const user = await db.user.findFirst({
-    where: { organizationId: orgId, role: 'ADMIN' },
-    select: { id: true },
-  })
-  if (!user) throw new Error('No admin user found. Run `pnpm db:seed` first.')
-  return user.id
-}
-
-interface DefaultContext {
-  userId: string
-  departmentId: string
-}
-
-async function getDefaultContext(orgId: string): Promise<DefaultContext> {
-  const user = await db.user.findFirst({
-    where: { organizationId: orgId, role: 'ADMIN' },
-    select: { id: true },
-  })
-  if (!user) throw new Error('No admin user found. Run `pnpm db:seed` first.')
-  const dept = await db.department.findFirst({
-    where: { organizationId: orgId, slug: 'engineering' },
-    select: { id: true },
-  })
-  if (!dept) throw new Error('Engineering department missing. Run `pnpm db:seed` first.')
-  return { userId: user.id, departmentId: dept.id }
 }
 
 async function uniqueHiringRequestSlug(orgId: string, title: string): Promise<string> {

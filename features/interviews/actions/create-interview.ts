@@ -9,6 +9,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
+import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
 import { getEventBus } from '@/lib/events'
 import type { CreateInterviewInput, ActionResult } from '../types'
 
@@ -18,17 +20,6 @@ function safeRevalidate(path: string): void {
   } catch {
     // Outside a request context (e.g. tsx script). Ignore.
   }
-}
-
-async function getDefaultActorId(orgId: string): Promise<string> {
-  const user = await db.user.findFirst({
-    where: { organizationId: orgId, role: 'ADMIN' },
-    select: { id: true },
-  })
-  if (user) return user.id
-  const any = await db.user.findFirst({ where: { organizationId: orgId }, select: { id: true } })
-  if (!any) throw new Error('No user in organization. Run pnpm db:seed first.')
-  return any.id
 }
 
 async function resolveNames(userIds: string[]): Promise<string[]> {
@@ -45,14 +36,18 @@ export async function createInterviewAction(
 ): Promise<ActionResult<{ interviewId: string }>> {
   const bus = getEventBus()
   try {
-    const candidate = await db.candidate.findUnique({
-      where: { id: input.candidateId },
+    // Sprint 9 PART 13: requires interview.create. Tenant-scoped.
+    const auth = await requirePermission('interview.create')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
+    const candidate = await db.candidate.findFirst({
+      where: { id: input.candidateId, organizationId: orgId },
       select: { id: true, organizationId: true, hiringRequestId: true, stage: true, firstName: true, lastName: true },
     })
     if (!candidate) {
       return { ok: false, error: { code: 'NOT_FOUND', message: 'Candidate not found.', retryable: false } }
     }
-    const actorId = await getDefaultActorId(candidate.organizationId)
     const interview = await db.interview.create({
       data: {
         organizationId: candidate.organizationId,

@@ -8,6 +8,7 @@
  */
 
 import { db } from '@/lib/db'
+import { requireAuth } from '@/lib/auth'
 import type { Candidate } from '@/types'
 
 export interface CandidatesPayload {
@@ -25,7 +26,11 @@ export interface CandidatesPayload {
 }
 
 export async function getCandidatesAction(): Promise<CandidatesPayload> {
-  const orgId = await getDefaultOrgId()
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    return { candidates: [] }
+  }
+  const orgId = auth.data.organizationId
   const rows = await db.candidate.findMany({
     where: { organizationId: orgId },
     select: {
@@ -79,8 +84,4 @@ function avatarFor(name: string): string {
   return '👨‍💼'
 }
 
-async function getDefaultOrgId(): Promise<string> {
-  const org = await db.organization.findFirst({ select: { id: true } })
-  if (!org) throw new Error('No organization found. Run `pnpm db:seed` first.')
-  return org.id
-}
+

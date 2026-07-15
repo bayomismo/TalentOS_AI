@@ -1,10 +1,12 @@
 'use server'
 
 /**
- * Sprint 8 — Decision Hub server actions.
+ * Sprint 8 + 9 — Decision Hub server actions.
  *
  * Thin wrappers around the repository + service. Each action:
- *  - Validates input
+ *  - Authorizes the caller (Sprint 9 PART 13)
+ *  - Verifies the requested resources belong to the caller's organization
+ *    (Sprint 9 PART 6: IDOR guard)
  *  - Calls the repository / service
  *  - Emits events / activities via the service
  *  - Returns an ActionResult
@@ -13,12 +15,13 @@
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
 import { getEventBus } from '@/lib/events'
+import { recordAuditLog, requireAuth, requirePermission } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
 import {
   buildComparisonView,
   buildDecisionHubView,
   createDecisionActivity,
   findExistingDecision,
-  getDefaultActorIdForOrg,
   upsertDecision,
 } from '../repositories/decision-repository'
 import { generateDecisionBriefService } from '../services/decision-brief-service'
@@ -32,243 +35,250 @@ import type {
 } from '../types'
 
 function safeRevalidate(path: string): void {
-  try {
-    revalidatePath(path)
-  } catch {
-    // ignore
-  }
-}
-
-function activitySnapshot(a: { id: string; type: string; title: string; description: string | null; occurredAt: Date }) {
-  return {
-    id: a.id,
-    type: a.type,
-    title: a.title,
-    description: a.description,
-    actorName: null,
-    candidateName: null,
-    occurredAt: a.occurredAt.toISOString(),
-  }
+  try { revalidatePath(path) } catch { /* outside request context */ }
 }
 
 // -----------------------------------------------------------------------------
-// 1. getDecisionHubAction
+// 1. Get Decision Hub
 // -----------------------------------------------------------------------------
 
 export async function getDecisionHubAction(
-  hiringRequestId: string
+  hiringRequestId: string,
 ): Promise<ActionResult<DecisionHubView>> {
   try {
-    const view = await buildDecisionHubView(hiringRequestId)
+    // PART 13: requires decision.view. Tenant-scoped.
+    const auth = await requirePermission('decision.view')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+
+    // PART 6: IDOR guard — verify HR belongs to this tenant.
+    const hrCheck = await db.hiringRequest.findFirst({
+      where: { id: hiringRequestId, organizationId: orgId },
+      select: { id: true },
+    })
+    if (!hrCheck) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found', retryable: false } }
+    }
+
+    const view = await buildDecisionHubView(hiringRequestId, orgId)
     if (!view) {
-      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found.', retryable: false } }
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found', retryable: false } }
     }
     return { ok: true, data: view }
   } catch (err) {
-    return {
-      ok: false,
-      error: { code: 'INTERNAL', message: 'Failed to load Decision Hub.', retryable: true, details: err instanceof Error ? err.message : String(err) },
-    }
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to load Decision Hub', retryable: true } }
   }
 }
 
 // -----------------------------------------------------------------------------
-// 2. getComparisonAction
+// 2. Get Comparison View
 // -----------------------------------------------------------------------------
 
 export async function getComparisonAction(
   hiringRequestId: string,
-  candidateIds: string[]
+  candidateIds: string[],
 ): Promise<ActionResult<ComparisonView>> {
   try {
-    if (candidateIds.length < 2) {
-      return { ok: false, error: { code: 'TOO_FEW_CANDIDATES', message: 'Select at least 2 candidates to compare.', retryable: false } }
+    // PART 13: requires decision.compare. Tenant-scoped.
+    const auth = await requirePermission('decision.compare')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+
+    // IDOR guard
+    const hrCheck = await db.hiringRequest.findFirst({
+      where: { id: hiringRequestId, organizationId: orgId },
+      select: { id: true },
+    })
+    if (!hrCheck) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found', retryable: false } }
     }
-    if (candidateIds.length > 4) {
-      return { ok: false, error: { code: 'TOO_MANY_CANDIDATES', message: 'At most 4 candidates can be compared at once.', retryable: false } }
+    const candCount = await db.candidate.count({
+      where: { id: { in: candidateIds }, hiringRequestId, organizationId: orgId },
+    })
+    if (candCount !== candidateIds.length) {
+      return { ok: false, error: { code: 'CANDIDATE_MISMATCH', message: 'Candidates do not belong to this hiring request.', retryable: false } }
     }
-    const view = await buildComparisonView(hiringRequestId, candidateIds)
+
+    const view = await buildComparisonView(hiringRequestId, orgId, candidateIds)
     if (!view) {
-      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found.', retryable: false } }
-    }
-    if (view.candidates.length !== candidateIds.length) {
-      return {
-        ok: false,
-        error: { code: 'CANDIDATE_MISMATCH', message: 'One or more selected candidates do not belong to this hiring request.', retryable: false },
-      }
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Comparison could not be built', retryable: false } }
     }
     return { ok: true, data: view }
   } catch (err) {
-    return {
-      ok: false,
-      error: { code: 'INTERNAL', message: 'Failed to load comparison.', retryable: true, details: err instanceof Error ? err.message : String(err) },
-    }
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to load comparison', retryable: true } }
   }
 }
 
 // -----------------------------------------------------------------------------
-// 3. logComparisonViewedAction
+// 3. Log comparison viewed
 // -----------------------------------------------------------------------------
 
 export async function logComparisonViewedAction(
   hiringRequestId: string,
-  candidateIds: string[]
-): Promise<ActionResult<{ logged: true }>> {
-  const bus = getEventBus()
+  candidateIds: string[],
+): Promise<ActionResult<{ logged: boolean }>> {
   try {
-    const hr = await db.hiringRequest.findUnique({ where: { id: hiringRequestId }, select: { id: true, organizationId: true } })
-    if (!hr) return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found.', retryable: false } }
-    const actorId = await getDefaultActorIdForOrg(hr.organizationId)
+    // PART 13: requires decision.compare to view a comparison.
+    const auth = await requirePermission('decision.compare')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+
+    const hr = await db.hiringRequest.findFirst({
+      where: { id: hiringRequestId, organizationId: orgId },
+      select: { id: true, organizationId: true, title: true },
+    })
+    if (!hr) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found', retryable: false } }
+    }
+
+    const bus = getEventBus()
     const activity = await createDecisionActivity({
       organizationId: hr.organizationId,
       type: 'COMPARISON_VIEWED',
-      actorId,
-      candidateId: candidateIds[0] ?? '00000000-0000-0000-0000-000000000000',
+      actorId: auth.data.userId,
+      candidateId: candidateIds[0] ?? null,
       hiringRequestId: hr.id,
-      title: `Compared ${candidateIds.length} candidate${candidateIds.length === 1 ? '' : 's'}`,
+      title: `Comparison viewed for ${hr.title}`,
+      description: `Compared ${candidateIds.length} candidate(s)`,
       metadata: { candidateIds },
     })
-    bus.publish({
-      type: 'CandidateComparisonCreated',
-      payload: { hiringRequestId: hr.id, candidateIds, viewedAt: activity.occurredAt.toISOString() },
-    })
-    bus.publish({
-      type: 'ActivityRecorded',
-      payload: { activity: activitySnapshot({ ...activity, occurredAt: activity.occurredAt }) },
-    })
+    bus.publish({ type: 'CandidateComparisonCreated', payload: { hiringRequestId: hr.id, candidateIds, viewedAt: new Date().toISOString() } })
+
     return { ok: true, data: { logged: true } }
   } catch (err) {
-    return {
-      ok: false,
-      error: { code: 'INTERNAL', message: 'Failed to log comparison.', retryable: true, details: err instanceof Error ? err.message : String(err) },
-    }
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to log', retryable: true } }
   }
 }
 
 // -----------------------------------------------------------------------------
-// 4. generateDecisionBriefAction
+// 4. Generate Decision Brief
 // -----------------------------------------------------------------------------
 
 export async function generateDecisionBriefAction(
-  input: GenerateDecisionBriefInput
+  input: GenerateDecisionBriefInput,
 ): Promise<ActionResult<DecisionBriefSummary>> {
-  const result = await generateDecisionBriefService(input)
-  if (result.ok) {
-    safeRevalidate(`/hiring-requests/${input.hiringRequestId}/decision`)
-    safeRevalidate(`/hiring-requests/${input.hiringRequestId}/decision/compare`)
+  try {
+    // PART 13: requires ai.generate_decision_brief. Tenant-scoped.
+    const auth = await requirePermission('ai.generate_decision_brief')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+
+    // IDOR guard: HR + all candidates must belong to this org.
+    const hr = await db.hiringRequest.findFirst({
+      where: { id: input.hiringRequestId, organizationId: orgId },
+      select: { id: true, organizationId: true, title: true },
+    })
+    if (!hr) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Hiring request not found', retryable: false } }
+    }
+    if (input.candidateIds.length < 2 || input.candidateIds.length > 4) {
+      return { ok: false, error: { code: 'VALIDATION', message: 'Brief requires 2 to 4 candidates.', retryable: false } }
+    }
+    const candCount = await db.candidate.count({
+      where: { id: { in: input.candidateIds }, hiringRequestId: hr.id, organizationId: orgId },
+    })
+    if (candCount !== input.candidateIds.length) {
+      return { ok: false, error: { code: 'CANDIDATE_MISMATCH', message: 'Candidates do not belong to this hiring request.', retryable: false } }
+    }
+
+    const result = await generateDecisionBriefService({
+      hiringRequestId: hr.id,
+      organizationId: orgId,
+      candidateIds: input.candidateIds,
+      actorId: auth.data.userId,
+    })
+    if (!result.ok) return { ok: false, error: { code: 'INTERNAL', message: result.error.message, retryable: result.error.retryable ?? true } }
+    return { ok: true, data: result.data }
+  } catch (err) {
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to generate Decision Brief', retryable: true } }
   }
-  return result
 }
 
 // -----------------------------------------------------------------------------
-// 5. recordDecisionAction
+// 5. Record human decision
 // -----------------------------------------------------------------------------
 
 export async function recordDecisionAction(
-  input: RecordDecisionInput
-): Promise<ActionResult<{ decisionId: string; decision: string; decidedAt: string; decidedByName: string }>> {
-  const bus = getEventBus()
+  input: RecordDecisionInput,
+): Promise<ActionResult<{ decisionId: string; decision: string }>> {
   try {
-    if (!input.notes || input.notes.trim().length < 4) {
-      return { ok: false, error: { code: 'NOTES_REQUIRED', message: 'Decision notes are required (min 4 characters).', retryable: false } }
-    }
-    if (!['ADVANCE', 'HOLD', 'REJECT', 'SELECTED'].includes(input.decision)) {
-      return { ok: false, error: { code: 'INVALID_DECISION', message: 'Invalid decision value.', retryable: false } }
-    }
-    const candidate = await db.candidate.findUnique({
-      where: { id: input.candidateId },
+    // PART 13: requires decision.record. Tenant-scoped.
+    const auth = await requirePermission('decision.record')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+
+    // IDOR guard: candidate must belong to this org.
+    const candidate = await db.candidate.findFirst({
+      where: { id: input.candidateId, organizationId: orgId },
       select: { id: true, organizationId: true, hiringRequestId: true, firstName: true, lastName: true },
     })
     if (!candidate) {
-      return { ok: false, error: { code: 'NOT_FOUND', message: 'Candidate not found.', retryable: false } }
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Candidate not found', retryable: false } }
     }
-    if (candidate.hiringRequestId !== input.hiringRequestId) {
-      return { ok: false, error: { code: 'CANDIDATE_MISMATCH', message: 'Candidate does not belong to this hiring request.', retryable: false } }
-    }
-    const actorId = await getDefaultActorIdForOrg(candidate.organizationId)
 
-    const existing = await findExistingDecision(candidate.id, input.hiringRequestId)
+    const existing = await findExistingDecision(candidate.id, candidate.hiringRequestId)
     const decision = await upsertDecision({
-      organizationId: candidate.organizationId,
       candidateId: candidate.id,
-      hiringRequestId: input.hiringRequestId,
+      hiringRequestId: candidate.hiringRequestId,
+      organizationId: candidate.organizationId,
       decision: input.decision,
       notes: input.notes,
-      reason: input.reason ?? null,
-      decidedById: actorId,
+      reason: input.reason,
+      decidedById: auth.data.userId,
     })
 
-    const decisionActivityType = mapDecisionToActivityType(input.decision)
+    const bus = getEventBus()
+    const eventType =
+      input.decision === 'SELECTED' ? 'CANDIDATE_SELECTED'
+        : input.decision === 'REJECT' ? 'CANDIDATE_REJECTED'
+        : input.decision === 'HOLD' ? 'CANDIDATE_HELD'
+        : 'CANDIDATE_ADVANCED'
+
     const activity = await createDecisionActivity({
       organizationId: candidate.organizationId,
-      type: decisionActivityType,
-      actorId,
+      type: eventType,
+      actorId: auth.data.userId,
       candidateId: candidate.id,
-      hiringRequestId: input.hiringRequestId,
+      hiringRequestId: candidate.hiringRequestId,
       candidateDecisionId: decision.id,
-      title: existing
-        ? `Decision updated: ${input.decision.replace('_', ' ')}`
-        : `Human decision: ${input.decision.replace('_', ' ')}`,
+      title: `${candidate.firstName} ${candidate.lastName} → ${input.decision.toLowerCase()}`,
       description: input.notes,
-      metadata: {
-        decision: input.decision,
-        reason: input.reason ?? null,
-        actorName: decision.decidedBy
-          ? `${decision.decidedBy.firstName} ${decision.decidedBy.lastName}`
-          : 'Unknown',
-      },
+      metadata: { decision: input.decision, reason: input.reason, previousDecisionId: existing?.id ?? null },
     })
-    const evaluator = decision.decidedBy
+
+    const activitySnapshot: import('@/lib/events/types').ActivitySnapshot = {
+      id: activity.id,
+      type: activity.type,
+      title: activity.title,
+      description: activity.description,
+      actorName: activity.actor ? `${activity.actor.firstName} ${activity.actor.lastName}` : null,
+      candidateName: activity.candidate ? `${activity.candidate.firstName} ${activity.candidate.lastName}` : null,
+      occurredAt: activity.occurredAt.toISOString(),
+    }
     bus.publish({
       type: 'CandidateDecisionRecorded',
       payload: {
         decisionId: decision.id,
         candidateId: candidate.id,
-        hiringRequestId: input.hiringRequestId,
+        hiringRequestId: candidate.hiringRequestId,
         decision: input.decision,
-        decidedByName: evaluator ? `${evaluator.firstName} ${evaluator.lastName}` : 'Unknown',
+        decidedByName: activitySnapshot.actorName ?? 'Unknown',
         decidedAt: decision.decidedAt.toISOString(),
       },
     })
-    bus.publish({
-      type: 'ActivityRecorded',
-      payload: { activity: activitySnapshot({ ...activity, occurredAt: activity.occurredAt }) },
+
+    await recordAuditLog({
+      organizationId: candidate.organizationId,
+      actorId: auth.data.userId,
+      action: 'HUMAN_DECISION_RECORDED',
+      targetType: 'candidate_decision',
+      targetId: decision.id,
+      outcome: 'success',
+      metadata: { candidateId: candidate.id, decision: input.decision },
     })
 
-    safeRevalidate(`/candidates/${candidate.id}`)
-    safeRevalidate(`/hiring-requests/${input.hiringRequestId}/decision`)
-    safeRevalidate(`/hiring-requests/${input.hiringRequestId}/candidates`)
-
-    return {
-      ok: true,
-      data: {
-        decisionId: decision.id,
-        decision: input.decision,
-        decidedAt: decision.decidedAt.toISOString(),
-        decidedByName: evaluator ? `${evaluator.firstName} ${evaluator.lastName}` : 'Unknown',
-      },
-    }
+    return { ok: true, data: { decisionId: decision.id, decision: input.decision } }
   } catch (err) {
-    return {
-      ok: false,
-      error: { code: 'INTERNAL', message: 'Failed to record decision.', retryable: true, details: err instanceof Error ? err.message : String(err) },
-    }
-  }
-}
-
-function mapDecisionToActivityType(decision: 'ADVANCE' | 'HOLD' | 'REJECT' | 'SELECTED'):
-  | 'CANDIDATE_SELECTED'
-  | 'CANDIDATE_HELD'
-  | 'CANDIDATE_REJECTED'
-  | 'CANDIDATE_ADVANCED' {
-  switch (decision) {
-    case 'SELECTED':
-      return 'CANDIDATE_SELECTED'
-    case 'HOLD':
-      return 'CANDIDATE_HELD'
-    case 'REJECT':
-      return 'CANDIDATE_REJECTED'
-    case 'ADVANCE':
-      return 'CANDIDATE_ADVANCED'
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to record decision', retryable: true } }
   }
 }

@@ -21,6 +21,8 @@
 import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
+import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { toActionFailure } from '@/lib/auth/adapter'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { getFileStorage } from '@/lib/storage'
 import { parseCV, CVError } from '@/lib/cv'
@@ -129,8 +131,12 @@ export async function getCandidateWorkspaceAction(
   hiringRequestId: string
 ): Promise<ActionResult<WorkspacePayload>> {
   try {
-    const hr = await db.hiringRequest.findUnique({
-      where: { id: hiringRequestId },
+    // Sprint 9 PART 13: candidate.view permission. Tenant-scoped.
+    const auth = await requirePermission('candidate.view')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const hr = await db.hiringRequest.findFirst({
+      where: { id: hiringRequestId, organizationId: orgId },
       include: {
         department: true,
         jobDescription: true,
@@ -259,8 +265,13 @@ export async function uploadCVsAction(
   input: UploadCVsInput
 ): Promise<ActionResult<UploadCVsSuccess>> {
   try {
-    const hr = await db.hiringRequest.findUnique({
-      where: { id: input.hiringRequestId },
+    // Sprint 9: requires cv.upload. Tenant-scoped.
+    const auth = await requirePermission('cv.upload')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
+    const hr = await db.hiringRequest.findFirst({
+      where: { id: input.hiringRequestId, organizationId: orgId },
       include: { jobDescription: true, organization: true },
     })
     if (!hr) {
@@ -278,8 +289,7 @@ export async function uploadCVsAction(
       }
     }
 
-    const orgId = hr.organizationId
-    const actorId = await getDefaultActorId(orgId)
+    // orgId and actorId are already in scope from the requirePermission call above.
     const storage = getFileStorage()
     const engine = getAIEngine()
     const bus = getEventBus()
@@ -697,8 +707,12 @@ export async function reanalyzeCandidateAction(
   candidateId: string
 ): Promise<ActionResult<ReanalyzeCandidateSuccess>> {
   try {
-    const candidate = await db.candidate.findUnique({
-      where: { id: candidateId },
+    // Sprint 9: requires ai.analyze_candidate. Tenant-scoped.
+    const auth = await requirePermission('ai.analyze_candidate')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const candidate = await db.candidate.findFirst({
+      where: { id: candidateId, organizationId: orgId },
       include: {
         skills: true,
         experiences: true,
@@ -827,15 +841,18 @@ export async function moveCandidateStageAction(
   input: MoveCandidateStageInput
 ): Promise<ActionResult<MoveCandidateStageSuccess>> {
   try {
-    const candidate = await db.candidate.findUnique({
-      where: { id: input.candidateId },
+    // Sprint 9: requires candidate.change_stage. Tenant-scoped.
+    const auth = await requirePermission('candidate.change_stage')
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
+    const candidate = await db.candidate.findFirst({
+      where: { id: input.candidateId, organizationId: orgId },
       include: { hiringRequest: true, skills: true },
     })
     if (!candidate) {
       return { ok: false, error: { code: 'CANDIDATE_NOT_FOUND', message: 'Candidate not found.', retryable: false } }
     }
-
-    const actorId = await getDefaultActorId(candidate.organizationId)
 
     const updated = await db.$transaction(async tx => {
       const u = await tx.candidate.update({
@@ -967,14 +984,3 @@ function parseDateLoose(s: string): Date | null {
   return null
 }
 
-async function getDefaultActorId(orgId: string): Promise<string> {
-  const user = await db.user.findFirst({
-    where: { organizationId: orgId, role: 'ADMIN' },
-    select: { id: true },
-  })
-  if (user) return user.id
-  // Fallback to any user in the org (single-tenant seed has only one)
-  const any = await db.user.findFirst({ where: { organizationId: orgId }, select: { id: true } })
-  if (!any) throw new Error('No user in organization. Run pnpm db:seed first.')
-  return any.id
-}

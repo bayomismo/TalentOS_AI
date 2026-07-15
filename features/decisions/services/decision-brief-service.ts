@@ -19,7 +19,6 @@ import {
 } from '@/lib/ai/prompts/decision-brief'
 import {
   persistDecisionBriefTask,
-  getDefaultActorIdForOrg,
   createDecisionActivity,
 } from '../repositories/decision-repository'
 import type { ActionResult, DecisionBriefSummary } from '../types'
@@ -42,7 +41,9 @@ function activitySnapshot(a: { id: string; type: string; title: string; descript
 
 export async function generateDecisionBriefService(input: {
   hiringRequestId: string
+  organizationId: string
   candidateIds: string[]
+  actorId: string
 }): Promise<ActionResult<DecisionBriefSummary>> {
   const bus = getEventBus()
   try {
@@ -175,7 +176,7 @@ export async function generateDecisionBriefService(input: {
     const task = await persistDecisionBriefTask({
       organizationId: hr.organizationId,
       hiringRequestId: hr.id,
-      createdById: await getDefaultActorIdForOrg(hr.organizationId),
+      createdById: input.actorId,
       comparedCandidateIds: input.candidateIds,
       output,
       prompt: fullPrompt,
@@ -186,7 +187,7 @@ export async function generateDecisionBriefService(input: {
       durationMs: engineResult.latencyMs ?? null,
     })
 
-    const actorId = task.createdById ?? await getDefaultActorIdForOrg(hr.organizationId)
+    const actorId = task.createdById ?? input.actorId
     const activity = await createDecisionActivity({
       organizationId: hr.organizationId,
       type: 'DECISION_BRIEF_GENERATED',

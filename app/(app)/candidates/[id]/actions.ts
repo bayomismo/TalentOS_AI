@@ -8,6 +8,7 @@
  */
 
 import { db } from '@/lib/db'
+import { requireAuth } from '@/lib/auth'
 
 export interface MatchAnalysisBlock {
   overallScore: number
@@ -119,8 +120,14 @@ export interface CandidateDetail {
 }
 
 export async function getCandidateDetailAction(id: string): Promise<CandidateDetail | null> {
-  const c = await db.candidate.findUnique({
-    where: { id },
+  // Sprint 9 PART 6: candidate detail is tenant-scoped. Returns null if
+  // the candidate does not exist OR belongs to another organization
+  // (PART 21: do not leak cross-tenant resource existence).
+  const auth = await requireAuth()
+  if (!auth.ok) return null
+  const orgId = auth.data.organizationId
+  const c = await db.candidate.findFirst({
+    where: { id, organizationId: orgId },
     include: {
       skills: { orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }] },
       experiences: { orderBy: { startDate: 'desc' } },

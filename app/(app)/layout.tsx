@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import { SessionProvider } from 'next-auth/react'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { CommandPalette } from '@/components/layout/command-palette'
@@ -9,6 +10,18 @@ import { getPageTitle } from '@/config/navigation'
 import { EventBusProvider } from '@/lib/events'
 
 export default function AppLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <SessionProvider>
+      <AppLayoutInner>{children}</AppLayoutInner>
+    </SessionProvider>
+  )
+}
+
+function AppLayoutInner({
   children,
 }: {
   children: React.ReactNode
