@@ -39,18 +39,25 @@ import {
 // Input schema — required compensation facts that the user MUST provide
 // ---------------------------------------------------------------------------
 
+function caseInsensitiveEnum<T extends [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(values),
+  )
+}
+
 const InputSchema = z.object({
   candidateReference: z.string().min(1).max(200).describe('Free-text candidate reference resolved server-side (name, email, or id)'),
   /** CRITICAL: the AI may not invent these. The user must provide them. */
   salaryAmount: z.number().int().positive(),
-  salaryCurrency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'BRL', 'MXN', 'SGD', 'HKD', 'NZD']).default('USD'),
-  salaryPeriod: z.enum(['HOUR', 'YEAR', 'MONTH', 'WEEK']).default('YEAR'),
+  salaryCurrency: caseInsensitiveEnum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'BRL', 'MXN', 'SGD', 'HKD', 'NZD']).default('USD'),
+  salaryPeriod: caseInsensitiveEnum(['HOUR', 'YEAR', 'MONTH', 'WEEK']).default('YEAR'),
   title: z.string().min(2).max(160).describe('Offer title / position'),
   bonusAmount: z.number().int().min(0).optional(),
   commissionAmount: z.number().int().min(0).optional(),
   equityAmount: z.string().max(80).optional(),
-  employmentType: z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP']).default('FULL_TIME'),
-  workArrangement: z.enum(['ONSITE', 'REMOTE', 'HYBRID']).default('ONSITE'),
+  employmentType: caseInsensitiveEnum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP']).default('FULL_TIME'),
+  workArrangement: caseInsensitiveEnum(['ONSITE', 'REMOTE', 'HYBRID']).default('ONSITE'),
   startDate: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),
   probationPeriodDays: z.number().int().min(0).max(365).optional(),
