@@ -445,6 +445,23 @@ model Candidate {
   rating          Int             @default(0) // 0-5 stars
   source          String?         // e.g. "Referral", "LinkedIn", "Company Site"
   sourceDetails   String?
+
+  // AI match analysis (Sprint 6)
+  // All fields nullable so the seed data and pre-existing candidates stay valid.
+  // `matchScore` is 0-100. `matchScoreBreakdown` is a JSON object with per-axis
+  // scores (skills, experience, education, role). `recommendation` is a
+  // user-facing string ("Strong Match" | "Good Match" | "Potential Match" |
+  // "Weak Match" | "Not Recommended"). Strengths/gaps/concerns are string
+  // arrays produced by the AI engine.
+  matchScore             Int?
+  matchScoreBreakdown    Json?
+  recommendation         String?
+  recommendationReasoning String?  @db.Text
+  strengths              String[] @default([])
+  gaps                   String[] @default([])
+  concerns               String[] @default([])
+  analyzedAt             DateTime?
+
   appliedAt       DateTime        @default(now())
   lastActivityAt  DateTime        @default(now())
   rejectedAt      DateTime?

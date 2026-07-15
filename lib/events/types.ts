@@ -7,7 +7,9 @@
  */
 
 import type { JobDescriptionOutput } from '@/lib/ai/schemas/job-description.schema'
+import type { CandidateRecommendation } from '@/lib/ai/schemas/candidate-ranking.schema'
 import type {
+  ApplicationStage,
   EmploymentStatus,
   HiringRequestStatus,
   JobLevel,
@@ -77,6 +79,76 @@ export interface MetricDelta {
 }
 
 // -----------------------------------------------------------------------------
+// Sprint 6: CV / Candidate event payloads
+// -----------------------------------------------------------------------------
+
+export interface CVUploadedSnapshot {
+  /** Client-side temp id (matches UI queue). */
+  clientId: string
+  hiringRequestId: string
+  fileName: string
+  fileSize: number
+  fileKind: 'PDF' | 'DOCX'
+  uploadedAt: string
+}
+
+export interface CVParsedSnapshot {
+  clientId: string
+  hiringRequestId: string
+  fileName: string
+  parsedAt: string
+  characterCount: number
+}
+
+export interface CandidateCreatedSnapshot {
+  id: string
+  hiringRequestId: string
+  fullName: string
+  email: string
+  currentTitle: string
+  yearsExperience: number
+  createdAt: string
+}
+
+export interface MatchAnalysisSnapshot {
+  overallScore: number
+  skillsScore: number
+  experienceScore: number
+  educationScore: number
+  roleScore: number
+  recommendation: CandidateRecommendation
+  recommendationLabel: string
+  reasoning: string
+  strengths: string[]
+  gaps: string[]
+  concerns: string[]
+  analyzedAt: string
+}
+
+export interface CandidateAnalyzedSnapshot {
+  candidateId: string
+  hiringRequestId: string
+  fullName: string
+  analysis: MatchAnalysisSnapshot
+}
+
+export interface CandidateRankedSnapshot {
+  hiringRequestId: string
+  rankings: Array<{ candidateId: string; fullName: string; overallScore: number; recommendation: string }>
+  rankedAt: string
+}
+
+export interface CandidateStageChangedSnapshot {
+  candidateId: string
+  hiringRequestId: string
+  fullName: string
+  fromStage: ApplicationStage | null
+  toStage: ApplicationStage
+  changedAt: string
+  actorName: string | null
+}
+
+// -----------------------------------------------------------------------------
 // The bus's event union
 // -----------------------------------------------------------------------------
 
@@ -109,6 +181,13 @@ export type TalentOSEvent =
       type: 'HiringRequestDraftSaved'
       payload: { hiringRequest: HiringRequestSnapshot }
     }
+  // Sprint 6: CV / Candidate workspace events
+  | { type: 'CVUploaded'; payload: CVUploadedSnapshot }
+  | { type: 'CVParsed'; payload: CVParsedSnapshot }
+  | { type: 'CandidateCreated'; payload: CandidateCreatedSnapshot }
+  | { type: 'CandidateAnalyzed'; payload: CandidateAnalyzedSnapshot }
+  | { type: 'CandidateRanked'; payload: CandidateRankedSnapshot }
+  | { type: 'CandidateStageChanged'; payload: CandidateStageChangedSnapshot }
 
 export type TalentOSEventType = TalentOSEvent['type']
 

@@ -4,9 +4,14 @@
  * The single entry point for every AI feature in the product. The engine
  * is provider-agnostic — it talks only to `AIProvider`.
  *
- * In this sprint only `generateJobDescription()` is implemented. The
- * other public methods throw `NotImplementedError` so callers get a
- * typed failure mode (no silent `any` returns).
+ * Implemented in this codebase:
+ *   - generateJobDescription()  (Sprint 5)
+ *   - analyzeCV()               (Sprint 6)
+ *   - rankCandidate()           (Sprint 6)
+ *
+ * Reserved for later sprints:
+ *   - generateInterviewKit()
+ *   - generateOfferLetter()
  *
  * Structured-output flow (per call):
  *   1. Render the prompt.
@@ -21,8 +26,14 @@ import type { ZodType } from 'zod'
 import { getAIProvider } from '../providers/provider-factory'
 import type { AIProvider } from '../providers/base-provider'
 import { jobDescriptionPrompt } from '../prompts/job-description'
+import { cvAnalysisPrompt, type CVAnalysisInput } from '../prompts/cv-analysis'
+import { candidateRankingPrompt, type CandidateRankingInput } from '../prompts/candidate-ranking'
 import { jobDescriptionOutputSchema } from '../schemas/job-description.schema'
-import type { JobDescriptionOutput } from '../schemas/job-description.schema'
+import { cvAnalysisOutputSchema, type CVAnalysisOutput } from '../schemas/cv-analysis.schema'
+import {
+  candidateRankingOutputSchema,
+  type CandidateRankingOutput,
+} from '../schemas/candidate-ranking.schema'
 import {
   AIEngineError,
   NotImplementedError,
@@ -33,6 +44,7 @@ import type {
   ProviderHealth,
   ProviderResult,
 } from '../types'
+import type { JobDescriptionOutput } from '../schemas/job-description.schema'
 
 export class AIEngine {
   private readonly provider: AIProvider
@@ -62,20 +74,39 @@ export class AIEngine {
     return result
   }
 
+  /**
+   * Sprint 6 — extracts a structured candidate profile from raw CV text.
+   * The optional `jobContext` is folded into the prompt so the model can
+   * recommend an appropriate next pipeline stage.
+   */
+  async analyzeCV(input: CVAnalysisInput): Promise<ProviderResult<CVAnalysisOutput>> {
+    const prompt = cvAnalysisPrompt.render(input)
+    return this.callStructured<CVAnalysisOutput>(
+      cvAnalysisPrompt.id,
+      prompt,
+      cvAnalysisOutputSchema
+    )
+  }
+
+  /**
+   * Sprint 6 — scores a candidate against a job description.
+   * Returns per-axis scores, an overall 0-100 score, a recommendation
+   * label, and reasoning the HR team can read.
+   */
+  async rankCandidate(
+    input: CandidateRankingInput
+  ): Promise<ProviderResult<CandidateRankingOutput>> {
+    const prompt = candidateRankingPrompt.render(input)
+    return this.callStructured<CandidateRankingOutput>(
+      candidateRankingPrompt.id,
+      prompt,
+      candidateRankingOutputSchema
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Not yet implemented — fail loudly so callers know to wait
   // ---------------------------------------------------------------------------
-
-  analyzeCV(_cvText: string, _jobContext?: string): Promise<never> {
-    return Promise.reject(new NotImplementedError('analyzeCV'))
-  }
-
-  rankCandidate(
-    _candidateId: string,
-    _hiringRequestId: string
-  ): Promise<never> {
-    return Promise.reject(new NotImplementedError('rankCandidate'))
-  }
 
   generateInterviewKit(_input: {
     role: string
@@ -158,7 +189,7 @@ function serializeZodError(err: unknown): unknown {
 }
 
 /** Re-export the prompt's Zod schema type for callers. */
-export type { JobDescriptionOutput }
+export type { CVAnalysisOutput, CandidateRankingOutput }
 
 /** Singleton for convenience — production code should pass a provider explicitly when DI matters. */
 let defaultEngine: AIEngine | null = null
@@ -171,5 +202,5 @@ export function getAIEngine(): AIEngine {
 }
 
 /** Convenience re-exports for ergonomic imports. */
-export { jobDescriptionOutputSchema, jobDescriptionPrompt }
-export type { JobDescriptionInput }
+export { jobDescriptionOutputSchema, cvAnalysisOutputSchema, candidateRankingOutputSchema, jobDescriptionPrompt, cvAnalysisPrompt, candidateRankingPrompt }
+export type { JobDescriptionInput, CVAnalysisInput, CandidateRankingInput }
