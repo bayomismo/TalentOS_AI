@@ -365,6 +365,7 @@ model Department {
   head           User?           @relation("DepartmentHead", fields: [headUserId], references: [id], onDelete: SetNull)
   users          User[]          @relation("DepartmentMembers")
   hiringRequests HiringRequest[]
+  invitations    Invitation[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -1065,11 +1066,18 @@ model Invitation {
   revokedById    String?          @db.Uuid
   /// Optional one-time message from the inviter.
   message        String?
+  /// Sprint 12: recipient profile captured at invite time. Applied to
+  /// the User row at acceptance.
+  firstName      String?
+  lastName       String?
+  /// Sprint 12: optional department binding.
+  departmentId   String?          @db.Uuid
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   invitedBy    User         @relation("InvitationCreator", fields: [invitedById], references: [id], onDelete: Restrict)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
   @@index([email])

@@ -29,6 +29,11 @@ export interface CreateInvitationInput {
   role: UserRole
   invitedById: string
   message?: string
+  /// Sprint 12: optional recipient profile captured at invite time.
+  firstName?: string
+  lastName?: string
+  /// Sprint 12: optional department binding.
+  departmentId?: string | null
 }
 
 /**
@@ -56,6 +61,9 @@ export async function createInvitation(
       invitedById: input.invitedById,
       expiresAt,
       message: input.message,
+      ...(input.firstName ? { firstName: input.firstName } : {}),
+      ...(input.lastName ? { lastName: input.lastName } : {}),
+      ...(input.departmentId ? { departmentId: input.departmentId } : {}),
     },
   })
 
@@ -182,12 +190,15 @@ export async function acceptInvitation(input: {
         data: {
           organizationId: invitation.organizationId,
           email,
-          firstName: input.firstName.trim(),
-          lastName: input.lastName.trim(),
+          // Sprint 12: prefer the name captured at invite time, fall back
+          // to the name entered at acceptance.
+          firstName: (invitation.firstName ?? input.firstName).trim(),
+          lastName: (invitation.lastName ?? input.lastName).trim(),
           role: invitation.role,
           status: 'ACTIVE',
           passwordHash,
           passwordChangedAt: new Date(),
+          ...(invitation.departmentId ? { departmentId: invitation.departmentId } : {}),
         },
         select: { id: true },
       })

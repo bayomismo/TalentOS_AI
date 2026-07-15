@@ -1,17 +1,20 @@
 'use client'
 
-import { useState } from 'react'
-import { BellIcon, BuildingIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
 import { ChangePasswordCard } from '@/features/auth/components/change-password-card'
+import { TeamPage } from '@/features/user-management/components/team-page'
+import { DataManagementPage } from '@/features/data-management/components/data-management-page'
 import { cn } from '@/lib/utils'
 
 const settingsSections = [
   { id: 'profile', label: 'Profile', icon: UserIcon },
   { id: 'organization', label: 'Organization', icon: BuildingIcon },
-  { id: 'team', label: 'Team & Roles', icon: UsersIcon },
+  { id: 'team', label: 'Team & Users', icon: UsersIcon, adminOnly: true },
+  { id: 'data', label: 'Data Management', icon: DatabaseIcon, adminOnly: true },
   { id: 'notifications', label: 'Notifications', icon: BellIcon },
   { id: 'security', label: 'Security', icon: ShieldIcon },
   { id: 'integrations', label: 'Integrations', icon: KeyIcon },
@@ -21,6 +24,20 @@ type SettingsSectionId = (typeof settingsSections)[number]['id']
 
 export default function SettingsPage() {
   const [active, setActive] = useState<SettingsSectionId>('profile')
+  const [currentUserId, setCurrentUserId] = useState<string>('')
+  const [currentUserRole, setCurrentUserRole] = useState<string>('VIEWER')
+
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then(r => r.ok ? r.json() : null)
+      .then(s => {
+        if (s?.user?.id) setCurrentUserId(s.user.id)
+        if (s?.user?.role) setCurrentUserRole(s.user.role)
+      })
+      .catch(() => null)
+  }, [])
+
+  const isAdmin = currentUserRole === 'ADMIN'
 
   return (
     <div className="space-y-8 p-8">
@@ -68,7 +85,10 @@ export default function SettingsPage() {
         <div className="space-y-6">
           {active === 'profile' && <ProfileSection />}
           {active === 'organization' && <OrganizationSection />}
-          {active === 'team' && <TeamSection />}
+          {active === 'team' && isAdmin && <TeamPage currentUserId={currentUserId} currentUserRole={currentUserRole} />}
+          {active === 'team' && !isAdmin && <AccessDeniedCard />}
+          {active === 'data' && isAdmin && <DataManagementPage />}
+          {active === 'data' && !isAdmin && <AccessDeniedCard />}
           {active === 'notifications' && <NotificationsSection />}
           {active === 'security' && <SecuritySection />}
           {active === 'integrations' && <IntegrationsSection />}
@@ -149,80 +169,15 @@ function OrganizationSection() {
   )
 }
 
-function TeamSection() {
-  const members = [
-    { name: 'Jordan Rivera', email: 'jordan@company.com', role: 'Owner', status: 'Active' },
-    { name: 'Priya Patel', email: 'priya@company.com', role: 'Recruiter', status: 'Active' },
-    { name: 'Marcus Chen', email: 'marcus@company.com', role: 'Hiring Manager', status: 'Active' },
-    { name: 'Elena Rodriguez', email: 'elena@company.com', role: 'Interviewer', status: 'Pending' },
-  ]
+function AccessDeniedCard() {
   return (
     <Card>
-      <CardHeader
-        title="Team & roles"
-        description="Invite teammates and assign roles to control access across the platform."
-        action={
-          <>
-            <Button variant="outline" size="sm">Export</Button>
-            <Button size="sm">Invite member</Button>
-          </>
-        }
-      />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="border-y border-slate-200 bg-slate-50/50 text-left dark:border-slate-700 dark:bg-slate-800/50">
-            <tr className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              <th className="px-6 py-3 font-semibold">Member</th>
-              <th className="px-6 py-3 font-semibold">Role</th>
-              <th className="px-6 py-3 font-semibold">Status</th>
-              <th className="px-6 py-3 text-right font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {members.map(member => (
-              <tr key={member.email}>
-                <td className="px-6 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                      {member.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-900 dark:text-slate-50">
-                        {member.name}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {member.email}
-                      </p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-3 text-slate-600 dark:text-slate-300">
-                  {member.role}
-                </td>
-                <td className="px-6 py-3">
-                  <span
-                    className={cn(
-                      'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                      member.status === 'Active'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                    )}
-                  >
-                    {member.status}
-                  </span>
-                </td>
-                <td className="px-6 py-3 text-right">
-                  <Button variant="ghost" size="sm">Manage</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+        This section is only available to administrators.
+      </CardContent>
     </Card>
   )
 }
-
 function NotificationsSection() {
   const channels = [
     { id: 'email-digest', label: 'Daily email digest', desc: 'A summary of pipeline activity every morning.' },

@@ -31,6 +31,8 @@ import { PipelineColumn } from '@/features/dashboard/components/pipeline-column'
 import { StatCard } from '@/features/dashboard/components/stat-card'
 import { ActivityTimeline } from '@/features/dashboard/components/activity-timeline'
 import { StatusBadge } from '@/features/shared/components/status-badge'
+import { EmptyState } from '@/components/shared/empty-state'
+import Link from 'next/link'
 import { useTalentOSEvent } from '@/lib/events'
 import { getDashboardDataAction, type DashboardData } from '../actions'
 import type {
@@ -322,15 +324,16 @@ function iconForMetric(label: string) {
 
 function EmptyPositionsCard() {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-12 text-center dark:border-slate-700 dark:bg-slate-800/40">
-      <SparklesIcon className="h-8 w-8 text-emerald-500" />
-      <h3 className="mt-3 text-base font-semibold text-slate-900 dark:text-slate-50">
-        No open positions yet
-      </h3>
-      <p className="mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">
-        Open the AI Recruiter, describe the role you need, and the engine will generate a complete hiring package you can publish.
-      </p>
-    </div>
+    <EmptyState
+      icon={SparklesIcon}
+      title="No open positions yet"
+      description="Open the AI Recruiter, describe the role you need, and the engine will generate a complete hiring package you can publish."
+      actions={
+        <Link href="/ai-recruiter">
+          <Button>Open AI Recruiter</Button>
+        </Link>
+      }
+    />
   )
 }
 
