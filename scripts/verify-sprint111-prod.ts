@@ -333,18 +333,21 @@ async function main() {
     // B. Schedule Interview
     // ===========================================================
     console.log('\n[B] Schedule Interview (9-16):')
-    const intCountBefore = await db.interview.count({ where: { organizationId: orgId } })
+    const intCountBefore = await db.interview.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     const future = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-    await askCopilot(page, `Schedule a TECHNICAL interview for ${candidate.firstName} ${candidate.lastName} on ${future} for 60 minutes. Interviewer: ${testInterviewer.email}`)
+    await askCopilot(page, `Schedule a TECHNICAL interview for candidate email ${candidate.email} on ${future} for 60 minutes. Interviewer: ${testInterviewer.email}`)
+    await page.waitForTimeout(2000)
+    const intLastMessage = await page.locator('.whitespace-pre-wrap').last().textContent().catch(() => '<none>')
+    console.log(`  [debug] Interview last message: "${(intLastMessage ?? '').slice(0, 200)}…"`)
     await page.waitForSelector('text=AI ACTION PREVIEW', { timeout: 30000 })
     check('9. Interview preview appears', true)
-    const intCountAfterPrep = await db.interview.count({ where: { organizationId: orgId } })
+    const intCountAfterPrep = await db.interview.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     check('13. No Interview created at PREPARE time', intCountAfterPrep === intCountBefore)
     const confirmBtn2 = page.locator('button:has-text("Confirm")').first()
     await confirmBtn2.click()
     await page.waitForSelector('text=EXECUTED', { timeout: 30000 })
     check('14. EXECUTED badge appears', true)
-    const intCountAfterExec = await db.interview.count({ where: { organizationId: orgId } })
+    const intCountAfterExec = await db.interview.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     check('15. Exactly one Interview created', intCountAfterExec === intCountBefore + 1)
     const newInt = await db.interview.findFirst({
       where: { organizationId: orgId, candidateId: candidate.id },
@@ -358,17 +361,20 @@ async function main() {
     // C. Offer Draft
     // ===========================================================
     console.log('\n[C] Offer Draft (17-25):')
-    const offCountBefore = await db.offer.count({ where: { organizationId: orgId } })
-    await askCopilot(page, `Prepare an offer draft for ${candidate.firstName} ${candidate.lastName} with salary 150000 USD per year. Title: Senior Engineer.`)
+    const offCountBefore = await db.offer.count({ where: { organizationId: orgId, candidateId: candidate.id } })
+    await askCopilot(page, `Prepare an offer draft for candidate email ${candidate.email} with salary 150000 USD per year. Title: Senior Engineer.`)
+    await page.waitForTimeout(2000)
+    const offerLastMessage = await page.locator('.whitespace-pre-wrap').last().textContent().catch(() => '<none>')
+    console.log(`  [debug] Offer last message: "${(offerLastMessage ?? '').slice(0, 200)}…"`)
     await page.waitForSelector('text=AI ACTION PREVIEW', { timeout: 30000 })
     check('19. Offer preview appears', true)
-    const offCountAfterPrep = await db.offer.count({ where: { organizationId: orgId } })
+    const offCountAfterPrep = await db.offer.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     check('21. No Offer created at PREPARE time', offCountAfterPrep === offCountBefore)
     const confirmBtn3 = page.locator('button:has-text("Confirm")').first()
     await confirmBtn3.click()
     await page.waitForSelector('text=EXECUTED', { timeout: 30000 })
     check('22. EXECUTED badge appears', true)
-    const offCountAfterExec = await db.offer.count({ where: { organizationId: orgId } })
+    const offCountAfterExec = await db.offer.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     check('23. Exactly one Offer created', offCountAfterExec === offCountBefore + 1)
     const newOff = await db.offer.findFirst({
       where: { organizationId: orgId, candidateId: candidate.id },

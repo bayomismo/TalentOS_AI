@@ -569,10 +569,44 @@ function extractMissingFields(schema: z.ZodType<any>, args: Record<string, unkno
   const allowedKeys = getInputKeys(schema)
   const present = new Set(Object.keys(args))
   const missing: string[] = []
+  // Only flag a field as missing if the schema does NOT provide a default and
+  // does NOT make the field optional. Otherwise the field is fine to omit.
   for (const k of allowedKeys) {
-    if (!present.has(k)) missing.push(k)
+    if (present.has(k)) continue
+    const fieldSchema = getFieldSchema(schema, k)
+    if (!fieldSchema) {
+      missing.push(k)
+      continue
+    }
+    const inner = fieldSchema._def ?? fieldSchema
+    const typeName = inner.typeName ?? inner.type ?? ''
+    const isOptional = typeName === 'ZodOptional' || typeName === 'ZodNullable'
+    const hasDefault = typeName === 'ZodDefault' || inner.defaultValue !== undefined || inner.default !== undefined
+    if (!isOptional && !hasDefault) {
+      missing.push(k)
+    }
   }
   return missing
+}
+
+function getFieldSchema(schema: z.ZodType<any>, key: string): any {
+  try {
+    const def = (schema as any)._def
+    let shape: any = null
+    if (def) {
+      shape = typeof def.shape === 'function' ? def.shape() : def.shape
+      if (!shape && def.schema?._def) {
+        shape = typeof def.schema._def.shape === 'function' ? def.schema._def.shape() : def.schema._def.shape
+      }
+    }
+    if (!shape && (schema as any).shape && typeof (schema as any).shape === 'object') {
+      shape = (schema as any).shape
+    }
+    if (shape && typeof shape === 'object') {
+      return shape[key]
+    }
+  } catch {}
+  return null
 }
 
 function describeInputShape(schema: z.ZodType<any>): string {
