@@ -17,6 +17,7 @@ export interface DashboardData {
     title: string
     department: string
     openings: number
+    filled: number
     candidates: number
     status: 'active' | 'closed'
     createdAt: string
@@ -109,7 +110,8 @@ export async function getDashboardDataAction(): Promise<DashboardData> {
       title: p.title,
       department: p.department.name,
       openings: p.openings,
-      candidates: 0, // Will be wired when candidate count aggregation lands
+      filled: p.filled,
+      candidates: 0,
       status: p.status === 'CLOSED' || p.status === 'CANCELLED' ? 'closed' as const : 'active' as const,
       createdAt: p.createdAt.toISOString(),
     })),

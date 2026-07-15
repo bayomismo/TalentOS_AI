@@ -28,6 +28,7 @@ import {
   FileTextIcon,
   RefreshCcwIcon,
   SparklesIcon,
+  UserPlusIcon,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -204,7 +205,11 @@ function WizardInner() {
         return
       }
 
-      dispatch({ type: 'save-success', hiringRequestId: result.data.hiringRequest.id })
+      dispatch({
+        type: 'save-success',
+        hiringRequestId: result.data.hiringRequest.id,
+        savedHiringRequestId: result.data.hiringRequest.id,
+      })
 
       bus.publish({
         type: 'HiringRequestCreated',
@@ -246,7 +251,10 @@ function WizardInner() {
       >
         <ReviewScreen onSaveDraft={() => beginSave('draft')} onCreate={() => beginSave('create')} />
         {phase === 'saved' && state.lastSavedHiringRequestId && (
-          <SavedBanner hiringRequestTitle={state.prompt} />
+          <SavedBanner
+            hiringRequestTitle={state.prompt}
+            hiringRequestId={state.savedHiringRequestId}
+          />
         )}
         {phase === 'error' && error && (
           <ErrorBanner
@@ -352,7 +360,17 @@ function WizardInner() {
 // Sub-components
 // -----------------------------------------------------------------------------
 
-function SavedBanner({ hiringRequestTitle }: { hiringRequestTitle: string }) {
+function SavedBanner({
+  hiringRequestTitle,
+  hiringRequestId,
+}: {
+  hiringRequestTitle: string
+  /** Real hiring-request id (set only on the create path). */
+  hiringRequestId: string | null
+}) {
+  const addCandidatesHref = hiringRequestId
+    ? `/hiring-requests/${hiringRequestId}/candidates`
+    : null
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -367,17 +385,29 @@ function SavedBanner({ hiringRequestTitle }: { hiringRequestTitle: string }) {
         </div>
         <div className="flex-1">
           <p className="font-semibold text-emerald-800 dark:text-emerald-200">
-            Hiring request created
+            {hiringRequestId ? 'Hiring request created' : 'Draft saved'}
           </p>
           <p className="mt-0.5 text-sm text-emerald-700/80 dark:text-emerald-300/80">
-            {hiringRequestTitle || 'The new role'} is now in the open pipeline. The dashboard, recent activity, and open-positions list have been updated automatically.
+            {hiringRequestId
+              ? `${hiringRequestTitle || 'The new role'} is now in the open pipeline. The dashboard, recent activity, and open-positions list have been updated automatically.`
+              : `${hiringRequestTitle || 'The draft'} is saved. You can keep editing or come back later.`}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
+            {addCandidatesHref && (
+              <Link
+                href={addCandidatesHref}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+              >
+                <UserPlusIcon className="h-3.5 w-3.5" />
+                Add Candidates
+                <ArrowRightIcon className="h-3.5 w-3.5" />
+              </Link>
+            )}
             <Link
-              href="/hiring-requests"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+              href={`/hiring-requests${hiringRequestId ? `/${hiringRequestId}` : ''}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200"
             >
-              View in Hiring Requests
+              {hiringRequestId ? 'View Hiring Request' : 'View in Hiring Requests'}
               <ArrowRightIcon className="h-3.5 w-3.5" />
             </Link>
             <Link
@@ -385,7 +415,7 @@ function SavedBanner({ hiringRequestTitle }: { hiringRequestTitle: string }) {
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200"
             >
               <FileTextIcon className="h-3.5 w-3.5" />
-              Open Dashboard
+              Go to Dashboard
             </Link>
           </div>
         </div>

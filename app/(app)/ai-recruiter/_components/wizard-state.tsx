@@ -50,6 +50,8 @@ export interface WizardState {
   error: WizardError | null
   aiTaskId: string | null
   lastSavedHiringRequestId: string | null
+  /** Real hiring-request id (only set on the create path; null for drafts). */
+  savedHiringRequestId: string | null
   usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null
   model: string | null
 }
@@ -72,7 +74,7 @@ type WizardAction =
   | { type: 'remove-criterion'; id: string }
   | { type: 'add-criterion' }
   | { type: 'save-start' }
-  | { type: 'save-success'; hiringRequestId: string }
+  | { type: 'save-success'; hiringRequestId: string; savedHiringRequestId?: string }
   | { type: 'save-error'; error: WizardError }
   | { type: 'reset' }
 
@@ -83,6 +85,7 @@ const initialState: WizardState = {
   error: null,
   aiTaskId: null,
   lastSavedHiringRequestId: null,
+  savedHiringRequestId: null,
   usage: null,
   model: null,
 }
@@ -237,6 +240,7 @@ function reducer(state: WizardState, action: WizardAction): WizardState {
         ...state,
         phase: 'saved',
         lastSavedHiringRequestId: action.hiringRequestId,
+        savedHiringRequestId: action.savedHiringRequestId ?? null,
       }
 
     case 'save-error':

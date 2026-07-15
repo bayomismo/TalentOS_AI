@@ -29,6 +29,7 @@ import {
   SparklesIcon,
   TrashIcon,
   UploadIcon,
+  UserPlusIcon,
   XIcon,
 } from 'lucide-react'
 
@@ -420,11 +421,12 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
     )
   }
 
+
   const jd = data.jobDescription
 
   return (
     <div className="space-y-8 p-8">
-      <BackLink />
+      <BackLink jobTitle={data.hiringRequest.title} />
 
       <PageHeader
         title={data.hiringRequest.title}
@@ -500,6 +502,28 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
         <Card>
           <CardContent className="p-6 text-sm text-amber-700 dark:text-amber-300">
             <strong>No job description on this hiring request.</strong> Generate one in the AI Recruiter wizard before uploading CVs.
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Empty-state CTA — only when 0 candidates */}
+      {jd && data.candidates.length === 0 && (
+        <Card>
+          <CardContent className="space-y-4 p-8 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <UserPlusIcon className="h-6 w-6" aria-hidden />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                No candidates yet
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">
+                Drop CVs below — TalentOS AI will parse each file, score candidates against this role, and rank them automatically.
+              </p>
+            </div>
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              PDF or DOCX · up to 5 MB each · multiple files supported
+            </p>
           </CardContent>
         </Card>
       )}
@@ -604,16 +628,32 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
 // Sub-components
 // -----------------------------------------------------------------------------
 
-function BackLink() {
+function Breadcrumb({ jobTitle }: { jobTitle?: string }) {
   return (
-    <Link
-      href="/hiring-requests"
-      className="inline-flex items-center gap-1.5 text-sm text-slate-500 transition-colors hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:text-slate-400 dark:hover:text-slate-50"
-    >
-      <ArrowLeftIcon className="h-4 w-4" aria-hidden />
-      Back to hiring requests
-    </Link>
+    <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+      <Link
+        href="/hiring-requests"
+        className="rounded transition-colors hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 dark:hover:text-slate-50"
+      >
+        Hiring Requests
+      </Link>
+      {jobTitle && (
+        <>
+          <span aria-hidden className="text-slate-300 dark:text-slate-600">/</span>
+          <span className="max-w-[280px] truncate font-medium text-slate-700 dark:text-slate-200" title={jobTitle}>
+            {jobTitle}
+          </span>
+        </>
+      )}
+      <span aria-hidden className="text-slate-300 dark:text-slate-600">/</span>
+      <span className="font-semibold text-slate-900 dark:text-slate-50">Candidate Workspace</span>
+    </nav>
   )
+}
+
+// Backwards-compatible alias for existing call sites.
+function BackLink({ jobTitle }: { jobTitle?: string }) {
+  return <Breadcrumb jobTitle={jobTitle} />
 }
 
 function StatTile({

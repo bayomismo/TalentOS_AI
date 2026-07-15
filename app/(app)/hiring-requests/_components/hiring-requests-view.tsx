@@ -166,7 +166,7 @@ export function HiringRequestsView() {
           </div>
 
           {filtered.length > 0 ? (
-            <HiringRequestsTable positions={toPositions(filtered)} />
+            <HiringRequestsTable positions={toPositions(filtered)} showCandidateActions />
           ) : (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-10 text-center dark:border-slate-700 dark:bg-slate-800/40">
               <FilterIcon className="mx-auto h-8 w-8 text-slate-400" />
@@ -190,7 +190,10 @@ function snapshotToRow(s: HiringRequestSnapshot) {
     title: s.title,
     department: s.department,
     openings: s.openings,
+    filled: s.filled ?? 0,
     candidates: 0,
+    analyzed: 0,
+    shortlisted: 0,
     status: (s.status === 'CLOSED' || s.status === 'CANCELLED' || s.status === 'FILLED'
       ? 'closed' as const
       : 'active' as const),
@@ -204,7 +207,10 @@ function toPositions(rows: HiringRequestsPayload['positions']): Position[] {
     title: r.title,
     department: r.department,
     openings: r.openings,
+    filled: r.filled ?? 0,
     candidates: r.candidates,
+    analyzed: r.analyzed,
+    shortlisted: r.shortlisted,
     status: r.status,
     createdAt: new Date(r.createdAt),
   }))
