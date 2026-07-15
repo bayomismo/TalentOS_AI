@@ -207,8 +207,15 @@ async function handleActionRequest(
     return { ok: false, outcome: { kind: 'error', message: 'Could not validate the AI\'s argument extraction. Please try rephrasing.' } }
   }
   if (!inputParse.success) {
-    // PART 6: ask the user to clarify missing fields rather than invent
-    const missing = extractMissingFields(action.inputSchema, argExtraction.arguments)
+    // PART 6: ask the user to clarify missing fields rather than invent.
+    // Use the Zod error's path to get the exact missing field names.
+    const missing = (inputParse.error.issues ?? [])
+      .filter(issue => issue.code === 'invalid_type' && (issue as any).received === 'undefined')
+      .map(issue => issue.path.join('.'))
+    if (missing.length === 0) {
+      // Fall back to scanning the schema
+      missing.push(...extractMissingFields(action.inputSchema, argExtraction.arguments))
+    }
     const question = buildClarificationQuestion(actionId, missing, argExtraction.arguments)
     return {
       ok: true,
@@ -578,10 +585,14 @@ function extractMissingFields(schema: z.ZodType<any>, args: Record<string, unkno
       missing.push(k)
       continue
     }
-    const inner = fieldSchema._def ?? fieldSchema
-    const typeName = inner.typeName ?? inner.type ?? ''
-    const isOptional = typeName === 'ZodOptional' || typeName === 'ZodNullable'
-    const hasDefault = typeName === 'ZodDefault' || inner.defaultValue !== undefined || inner.default !== undefined
+    const def = (fieldSchema as any)._def
+    if (!def) { missing.push(k); continue }
+    // Detect optional / default / nullable. Zod 3 uses typeName; Zod 4 / other uses type.
+    const typeName: string = (def.typeName ?? def.type ?? '').toString()
+    const hasDefault = typeName === 'ZodDefault' || def.defaultValue !== undefined || def.default !== undefined
+    const isOptional = typeName === 'ZodOptional' || typeName === 'ZodNullable' || (def.innerType !== undefined && typeName === '')
+    // Heuristic: if a field has a ._def with .type, it's required.
+    // Optional/default fields have .innerType (Zod 3) or are wrapped in another schema.
     if (!isOptional && !hasDefault) {
       missing.push(k)
     }

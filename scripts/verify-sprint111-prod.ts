@@ -199,7 +199,7 @@ async function ensureSelectedCandidate(userId: string) {
     data: {
       organization: { connect: { id: org.id } },
       hiringRequest: { connect: { id: hr.id } },
-      firstName: 'Sprint111',
+      firstName: `Sprint111${Date.now().toString().slice(-6)}`,
       lastName: 'Candidate',
       email,
       stage: 'OFFER',
@@ -335,7 +335,7 @@ async function main() {
     console.log('\n[B] Schedule Interview (9-16):')
     const intCountBefore = await db.interview.count({ where: { organizationId: orgId, candidateId: candidate.id } })
     const future = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-    await askCopilot(page, `Schedule a TECHNICAL interview for candidate email ${candidate.email} on ${future} for 60 minutes. Interviewer: ${testInterviewer.email}`)
+    await askCopilot(page, `Schedule a TECHNICAL interview for candidate ${candidate.email} on ${future} for 60 minutes. Interviewer: ${testInterviewer.email}`)
     await page.waitForTimeout(2000)
     const intLastMessage = await page.locator('.whitespace-pre-wrap').last().textContent().catch(() => '<none>')
     console.log(`  [debug] Interview last message: "${(intLastMessage ?? '').slice(0, 200)}…"`)
