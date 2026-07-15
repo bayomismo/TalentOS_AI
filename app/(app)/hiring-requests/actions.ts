@@ -12,6 +12,7 @@
  */
 
 import { db } from '@/lib/db'
+import { requireAuth } from '@/lib/auth/authorize'
 import type { ApplicationStage, Prisma } from '@prisma/client'
 
 export interface HiringRequestsPayload {
@@ -41,7 +42,13 @@ export interface HiringRequestsPayload {
 const SHORTLISTED_STAGES: ApplicationStage[] = ['SCREENING', 'INTERVIEW', 'OFFER', 'HIRED']
 
 export async function getHiringRequestsAction(): Promise<HiringRequestsPayload> {
-  const orgId = await getDefaultOrgId()
+  // Sprint 12: use the authenticated user's organization, not findFirst()
+  // (findFirst() returned the wrong org in multi-tenant tests).
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    return { positions: [], stats: { total: 0, active: 0, openings: 0, candidates: 0 } }
+  }
+  const orgId = auth.data.organizationId
 
   const [rows, byHr] = await Promise.all([
     db.hiringRequest.findMany({
