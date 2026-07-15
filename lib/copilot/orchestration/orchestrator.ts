@@ -199,7 +199,13 @@ async function handleActionRequest(
   }
 
   // Validate the proposed arguments against the action's input schema
-  const inputParse = action.inputSchema.safeParse(argExtraction.arguments)
+  let inputParse
+  try {
+    inputParse = action.inputSchema.safeParse(argExtraction.arguments)
+  } catch (err) {
+    console.error('[copilot] inputSchema.safeParse threw:', err instanceof Error ? err.stack : err)
+    return { ok: false, outcome: { kind: 'error', message: 'Could not validate the AI\'s argument extraction. Please try rephrasing.' } }
+  }
   if (!inputParse.success) {
     // PART 6: ask the user to clarify missing fields rather than invent
     const missing = extractMissingFields(action.inputSchema, argExtraction.arguments)
@@ -406,15 +412,30 @@ async function extractActionArguments(
   userMessage: string,
   history?: Array<{ role: 'USER' | 'ASSISTANT'; content: string }>,
 ): Promise<{ ok: true; arguments: Record<string, unknown> } | { ok: false; message: string }> {
-  const action = getActionById(actionId)
-  if (!action) return { ok: false, message: 'Action not found.' }
+  // Top-level safety: never let an exception escape. PART 25.
+  try {
+  let action: ReturnType<typeof getActionById>
+  try {
+    action = getActionById(actionId)
+    if (!action) return { ok: false, message: 'Action not found.' }
+  } catch (err) {
+    console.error('[copilot] extractActionArguments setup failed:', err instanceof Error ? err.message : err)
+    return { ok: false, message: 'Action lookup failed.' }
+  }
   const allowed = getAllowedActionIds()
+  let inputShape: string
+  try {
+    inputShape = describeInputShape(action.inputSchema)
+  } catch (err) {
+    console.error('[copilot] describeInputShape failed:', err instanceof Error ? err.message : err)
+    inputShape = '(unable to describe)'
+  }
   const systemPrompt = `You are the TalentOS AI Copilot action argument extractor.
 
 The user wants to perform the action: ${actionId}
 
 The action expects an input object matching this JSON schema (informal):
-${describeInputShape(action.inputSchema)}
+${inputShape}
 
 CRITICAL RULES:
 - Extract ONLY values the user explicitly provided.
@@ -489,6 +510,28 @@ Do not wrap in markdown. Emit JSON only.`
           targetId: actionId,
           outcome: 'denied',
           reason: 'extraction_failed',
+          metadata: { reason, stack: (stack ?? '').slice(0, 2000) } as any,
+        },
+      })
+    } catch (e2) {
+      console.error('[copilot] audit write also failed:', e2 instanceof Error ? e2.message : e2)
+    }
+    return { ok: false, message: `I could not interpret your request. (reason: ${reason.slice(0, 200)})` }
+  }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'unknown'
+    const stack = err instanceof Error ? err.stack : ''
+    console.error('[copilot] extractActionArguments TOP-LEVEL FAILED:', reason, stack)
+    try {
+      await db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.userId,
+          action: 'COPILOT_ACTION_FAILED' as never,
+          targetType: 'copilot_debug',
+          targetId: actionId,
+          outcome: 'denied',
+          reason: 'extraction_top_level_failed',
           metadata: { reason, stack: (stack ?? '').slice(0, 2000) } as any,
         },
       })
