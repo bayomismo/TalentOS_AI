@@ -9,6 +9,8 @@ interface StatusBadgeProps {
     | 'interview'
     | 'offer'
     | 'hired'
+    | 'rejected'
+    | 'withdrawn'
     | 'active'
     | 'closed'
   className?: string
@@ -23,6 +25,8 @@ export function StatusBadge({ stage, className }: StatusBadgeProps) {
       'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200',
     offer: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-200',
     hired: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200',
+    rejected: 'bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-200',
+    withdrawn: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
     active: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200',
     closed: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
   }
@@ -33,6 +37,8 @@ export function StatusBadge({ stage, className }: StatusBadgeProps) {
     interview: 'Interview',
     offer: 'Offer',
     hired: 'Hired',
+    rejected: 'Rejected',
+    withdrawn: 'Withdrawn',
     active: 'Active',
     closed: 'Closed',
   }
