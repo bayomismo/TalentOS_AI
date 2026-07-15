@@ -209,9 +209,17 @@ async function handleActionRequest(
   if (!inputParse.success) {
     // PART 6: ask the user to clarify missing fields rather than invent.
     // Use the Zod error's path to get the exact missing field names.
-    const missing = (inputParse.error.issues ?? [])
-      .filter(issue => issue.code === 'invalid_type' && (issue as any).received === 'undefined')
-      .map(issue => issue.path.join('.'))
+    // Zod 4 issues have: code='invalid_type', expected=<type>, message='...received undefined'.
+    const missing: string[] = []
+    for (const issue of (inputParse.error.issues ?? [])) {
+      if (issue.code !== 'invalid_type') continue
+      const msg = (issue as any).message ?? ''
+      const received = (issue as any).received
+      if (received === 'undefined' || msg.includes('received undefined')) {
+        const path = issue.path.join('.')
+        if (path) missing.push(path)
+      }
+    }
     if (missing.length === 0) {
       // Fall back to scanning the schema
       missing.push(...extractMissingFields(action.inputSchema, argExtraction.arguments))
