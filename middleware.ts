@@ -3,12 +3,15 @@
  *
  *   1. Unauthenticated user accessing protected route → /login
  *   2. Unauthenticated user accessing /signup → allowed
- *   3. Authenticated user with no/incomplete onboarding → /onboarding/...
- *   4. Authenticated user with complete onboarding → requested route
- *   5. Invitation recipient on /accept-invite → allowed even mid-onboarding
- *      (so an invited user can join the inviter's org without being
- *      forced into create-org onboarding)
- *   6. Signup page redirects signed-in users to onboarding or dashboard
+ *   3. Authenticated user accessing /signup or /login → sent to
+ *      /onboarding/... or /dashboard based on stored JWT onboarding
+ *      state.
+ *   4. Onboarding state checks for protected app pages are done by
+ *      the page's own server component (which has DB access), not
+ *      the middleware. This avoids a redirect loop when the JWT
+ *      carries stale onboarding state right after a step transition.
+ *   5. The /onboarding/* layout itself enforces authentication and
+ *      the correct step (DB-backed).
  *
  * The middleware uses Auth.js v5's cookie-name conventions to detect a
  * session without depending on the full Auth.js runtime (which is
@@ -62,20 +65,12 @@ function hasSessionCookie(req: NextRequest): boolean {
 }
 
 /**
- * Decode the onboarding state from the Auth.js JWT cookie. This is a
- * best-effort, edge-compatible decode of the JWT payload (without
- * signature verification — the server still verifies the signature
- * on every request). The JWT carries the user's
- *   - userId
- *   - organizationId
- *   - role
- *   - passwordChangedAt
- * and we add onboardingStatus + onboardingStep on every login.
+ * Decode the onboarding step from the Auth.js JWT cookie. Used only
+ * to redirect /signup and /login for already-signed-in users. We do
+ * NOT use this for protected-app-route enforcement (that's done by
+ * the page itself) to avoid stale-JWT redirect loops.
  */
 function decodeJwtPayload(req: NextRequest): {
-  userId?: string
-  organizationId?: string
-  role?: string
   onboardingStatus?: string
   onboardingStep?: string
   onboardingOrgStatus?: string
@@ -86,44 +81,20 @@ function decodeJwtPayload(req: NextRequest): {
     try {
       const parts = cookie.value.split('.')
       if (parts.length < 2) continue
-      // base64url decode
       const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
       const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
       const json = atob(padded)
       const payload = JSON.parse(json) as Record<string, unknown>
       return {
-        userId: payload.userId as string | undefined,
-        organizationId: payload.organizationId as string | undefined,
-        role: payload.role as string | undefined,
         onboardingStatus: payload.onboardingStatus as string | undefined,
         onboardingStep: payload.onboardingStep as string | undefined,
         onboardingOrgStatus: payload.onboardingOrgStatus as string | undefined,
       }
     } catch {
-      // ignore decode errors — fall through to treat as no session
+      // ignore
     }
   }
   return {}
-}
-
-const PROTECTED_APP_PREFIXES = [
-  '/dashboard',
-  '/hiring-requests',
-  '/candidates',
-  '/interview-center',
-  '/offers',
-  '/job-library',
-  '/decision-hub',
-  '/analytics',
-  '/reports',
-  '/settings',
-  '/copilot',
-  '/ai-recruiter',
-  '/admin',
-]
-
-function isProtectedAppPath(pathname: string): boolean {
-  return PROTECTED_APP_PREFIXES.some(p => pathname === p || pathname.startsWith(p + '/'))
 }
 
 export function middleware(req: NextRequest) {
@@ -131,24 +102,16 @@ export function middleware(req: NextRequest) {
   const pathname = nextUrl.pathname
 
   if (isPublicPath(pathname)) {
-    // For /signup with an existing session, redirect to onboarding/dashboard
-    if (pathname === '/signup' && hasSessionCookie(req)) {
+    // For /signup or /login with an existing session, send the user
+    // to /onboarding/workspace (if they haven't completed) or
+    // /dashboard (if they have). The /onboarding layout itself
+    // re-reads the DB and forwards to the right step.
+    if ((pathname === '/signup' || pathname === '/login') && hasSessionCookie(req)) {
       const payload = decodeJwtPayload(req)
       if (payload.onboardingStatus === 'COMPLETED' && payload.onboardingOrgStatus === 'COMPLETED') {
         return NextResponse.redirect(new URL('/dashboard', nextUrl.origin))
       }
       return NextResponse.redirect(new URL('/onboarding/workspace', nextUrl.origin))
-    }
-    // For /login with an existing session, also redirect
-    if (pathname === '/login' && hasSessionCookie(req)) {
-      const payload = decodeJwtPayload(req)
-      if (payload.onboardingStatus === 'COMPLETED' && payload.onboardingOrgStatus === 'COMPLETED') {
-        return NextResponse.redirect(new URL('/dashboard', nextUrl.origin))
-      }
-      if (payload.onboardingStep && payload.onboardingStep !== 'COMPLETED') {
-        const next = nextRouteForStep(payload.onboardingStep)
-        if (next) return NextResponse.redirect(new URL(next, nextUrl.origin))
-      }
     }
     return NextResponse.next()
   }
@@ -161,33 +124,7 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // If user is in a protected app path but onboarding is incomplete,
-  // redirect to the appropriate onboarding step.
-  if (isProtectedAppPath(pathname)) {
-    const payload = decodeJwtPayload(req)
-    if (payload.onboardingStatus !== 'COMPLETED' || payload.onboardingOrgStatus !== 'COMPLETED') {
-      const next = nextRouteForStep(payload.onboardingStep ?? 'ACCOUNT_CREATED')
-      if (next) return NextResponse.redirect(new URL(next, nextUrl.origin))
-    }
-  }
-
   return NextResponse.next()
-}
-
-function nextRouteForStep(step: string): string | null {
-  switch (step) {
-    case 'ACCOUNT_CREATED':
-    case 'ORG_PENDING':
-      return '/onboarding/workspace'
-    case 'ORG_CREATED':
-      return '/onboarding/company'
-    case 'COMPANY_CONFIGURED':
-      return '/onboarding/team'
-    case 'TEAM_INVITED':
-      return '/onboarding/done'
-    default:
-      return null
-  }
 }
 
 export const config = {

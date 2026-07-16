@@ -1,73 +1,31 @@
-'use client'
+/**
+ * Sprint 13 — App layout with onboarding guard.
+ *
+ * The (app) layout is a server component that checks the user's
+ * onboarding state from the DB on every navigation. If onboarding is
+ * incomplete, the user is redirected to the appropriate step.
+ *
+ * The actual layout shell (sidebar, header, etc.) lives in the
+ * client component below.
+ */
+import { redirect } from 'next/navigation'
+import { auth } from '@/lib/auth/auth'
+import { getOnboardingSnapshot, isFullyOnboarded, nextOnboardingRoute } from '@/lib/onboarding/state'
+import { AppLayoutClient } from './layout-client'
 
-import { useEffect, useState } from 'react'
-import { usePathname } from 'next/navigation'
-import { SessionProvider } from 'next-auth/react'
-import { AppHeader } from '@/components/layout/app-header'
-import { AppSidebar } from '@/components/layout/app-sidebar'
-import { CommandPalette } from '@/components/layout/command-palette'
-import { getPageTitle } from '@/config/navigation'
-import { EventBusProvider } from '@/lib/events'
+export const dynamic = 'force-dynamic'
 
-export default function AppLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return (
-    <SessionProvider>
-      <AppLayoutInner>{children}</AppLayoutInner>
-    </SessionProvider>
-  )
-}
-
-function AppLayoutInner({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  const pathname = usePathname()
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [showCommandPalette, setShowCommandPalette] = useState(false)
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setShowCommandPalette(prev => !prev)
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
-        e.preventDefault()
-        window.location.href = '/copilot'
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  return (
-    <EventBusProvider>
-      <div className="flex h-screen bg-slate-50 dark:bg-slate-900">
-        <AppSidebar
-          open={sidebarOpen}
-          onToggle={() => setSidebarOpen(prev => !prev)}
-        />
-
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <AppHeader
-            title={getPageTitle(pathname)}
-            onOpenCommandPalette={() => setShowCommandPalette(true)}
-          />
-
-          <CommandPalette
-            open={showCommandPalette}
-            onClose={() => setShowCommandPalette(false)}
-          />
-
-          <div className="overflow-auto flex-1">{children}</div>
-        </main>
-      </div>
-    </EventBusProvider>
-  )
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth()
+  if (!session?.user?.id) {
+    // Middleware should have caught this, but defense in depth.
+    redirect('/login')
+  }
+  // Onboarding guard. We re-read the DB on every request so that a
+  // state transition in a server action is reflected immediately.
+  const snap = await getOnboardingSnapshot(session.user.id)
+  if (!isFullyOnboarded(snap)) {
+    redirect(nextOnboardingRoute(snap))
+  }
+  return <AppLayoutClient>{children}</AppLayoutClient>
 }
