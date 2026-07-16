@@ -18,6 +18,7 @@ import { db } from '@/lib/db'
 import { recordAuditLog } from './audit'
 import { hashPassword } from './password'
 import { validatePassword } from './password'
+import { buildAcceptInviteUrl } from '@/lib/url/canonical'
 
 export const INVITATION_TTL_DAYS = 7
 const TOKEN_PREFIX_LEN = 8
@@ -253,11 +254,13 @@ function hashToken(token: string): string {
  * Build the URL the invitee visits. The token is in the URL fragment so
  * it is never sent to the server in plaintext. The /accept-invite page
  * reads it and POSTs the password to the action.
+ *
+ * Sprint 12 — uses the canonical APP_URL only. Throws in production
+ * if APP_URL is unset or points at a Vercel preview hostname. See
+ * lib/url/canonical.ts for the full rules.
  */
 function buildInvitationUrl(token: string): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-  return `${base}/accept-invite#token=${encodeURIComponent(token)}`
+  return buildAcceptInviteUrl(token)
 }
 
 export { buildInvitationUrl, hashToken }

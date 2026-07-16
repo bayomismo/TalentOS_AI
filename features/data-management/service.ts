@@ -470,3 +470,318 @@ export async function executeDataCleanup(
 
   return { ok: true, data: result }
 }
+
+// -----------------------------------------------------------------------------
+// PART 12 — Business Data Reset (destructive, ADMIN-only)
+//
+// This is a SECOND, EXPLICITLY DESTRUCTIVE flow. The "Clean Demo & Test
+// Data" path above only removes records that match well-known
+// demo/E2E patterns. This reset, by contrast, removes ALL operational
+// business records in the organization — including records the
+// organization has created itself. It is intended for the owner to
+// clear operational data before go-live, or after a pilot, or when
+// the org has decided to start fresh.
+//
+// Always preserved (NEVER touched, regardless of reset type):
+//   - The Organization row itself
+//   - The current ADMIN account
+//   - All authentication configuration (AuthSession, password hashes)
+//   - All RBAC / security configuration (roles, permissions)
+//   - All PromptTemplate records
+//   - All AuditLog records (security history retention)
+//   - All Department rows (organizational structure)
+//
+// Removed (in correct dependency order inside one transaction):
+//   - All Hiring Requests
+//   - All Candidates and CandidateSkill rows
+//   - All Interview and InterviewEvaluation rows
+//   - All CandidateDecision rows
+//   - All Offer rows
+//   - All Activity rows
+//   - All AITask rows
+//   - All AIConversation rows
+//   - All CopilotActionConfirmation rows
+//   - All JobDescription rows
+//
+// The confirmation phrase is exactly "RESET TALENT DATA" (case-sensitive).
+// -----------------------------------------------------------------------------
+
+export interface BusinessResetPreview {
+  organization: { id: string; name: string; slug: string }
+  /// Will be deleted (count + ids for the audit log only, not the API).
+  toDelete: {
+    hiringRequests: number
+    candidates: number
+    candidateSkills: number
+    interviews: number
+    interviewEvaluations: number
+    candidateDecisions: number
+    offers: number
+    activities: number
+    aiTasks: number
+    aiConversations: number
+    copilotConfirmations: number
+    jobDescriptions: number
+  }
+  /// Will be preserved.
+  preserved: {
+    organization: string
+    currentAdmin: string
+    adminCount: number
+    totalUsers: number
+    departments: number
+    promptTemplates: number
+    auditLogs: number
+    authSessions: number
+  }
+}
+
+export async function previewBusinessReset(
+  ctx: { organizationId: string; userId: string; role: string },
+): Promise<ServiceResult<BusinessResetPreview>> {
+  if (!hasPermission(ctx.role as any, 'organization.manage' as any)) {
+    return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'Only ADMIN can reset business data.' } }
+  }
+  const org = await db.organization.findUnique({ where: { id: ctx.organizationId } })
+  if (!org) return { ok: false, error: { code: 'NOT_FOUND', message: 'Organization not found.' } }
+
+  // Count every operational record we will remove.
+  const [
+    hiringRequests,
+    candidates,
+    candidateSkills,
+    interviews,
+    interviewEvaluations,
+    candidateDecisions,
+    offers,
+    activities,
+    aiTasks,
+    aiConversations,
+    copilotConfirmations,
+    jobDescriptions,
+    adminCount,
+    totalUsers,
+    departments,
+    promptTemplates,
+    auditLogs,
+    authSessions,
+  ] = await Promise.all([
+    db.hiringRequest.count({ where: { organizationId: ctx.organizationId } }),
+    db.candidate.count({ where: { organizationId: ctx.organizationId } }),
+    db.candidateSkill.count({ where: { candidate: { organizationId: ctx.organizationId } } }),
+    db.interview.count({ where: { organizationId: ctx.organizationId } }),
+    db.interviewEvaluation.count({ where: { interview: { organizationId: ctx.organizationId } } }),
+    db.candidateDecision.count({ where: { organizationId: ctx.organizationId } }),
+    db.offer.count({ where: { organizationId: ctx.organizationId } }),
+    db.activity.count({ where: { organizationId: ctx.organizationId } }),
+    db.aITask.count({ where: { organizationId: ctx.organizationId } }),
+    db.aIConversation.count({ where: { task: { organizationId: ctx.organizationId } } }),
+    db.copilotActionConfirmation.count({ where: { organizationId: ctx.organizationId } }),
+    db.jobDescription.count({ where: { organizationId: ctx.organizationId } }),
+    db.user.count({ where: { organizationId: ctx.organizationId, role: 'ADMIN', status: 'ACTIVE' } }),
+    db.user.count({ where: { organizationId: ctx.organizationId } }),
+    db.department.count({ where: { organizationId: ctx.organizationId } }),
+    db.promptTemplate.count({ where: { organizationId: ctx.organizationId } }),
+    db.auditLog.count({ where: { organizationId: ctx.organizationId } }),
+    db.authSession.count({ where: { user: { organizationId: ctx.organizationId } } }),
+  ])
+
+  const currentAdmin = await db.user.findUnique({ where: { id: ctx.userId }, select: { email: true } })
+
+  return {
+    ok: true,
+    data: {
+      organization: { id: org.id, name: org.name, slug: org.slug },
+      toDelete: {
+        hiringRequests,
+        candidates,
+        candidateSkills,
+        interviews,
+        interviewEvaluations,
+        candidateDecisions,
+        offers,
+        activities,
+        aiTasks,
+        aiConversations,
+        copilotConfirmations,
+        jobDescriptions,
+      },
+      preserved: {
+        organization: org.name,
+        currentAdmin: currentAdmin?.email ?? 'unknown',
+        adminCount,
+        totalUsers,
+        departments,
+        promptTemplates,
+        auditLogs,
+        authSessions,
+      },
+    },
+  }
+}
+
+export interface BusinessResetResult {
+  deleted: BusinessResetPreview['toDelete']
+  preserved: {
+    organization: string
+    adminCount: number
+    totalUsers: number
+    departments: number
+    promptTemplates: number
+    auditLogs: number
+  }
+}
+
+export async function executeBusinessReset(
+  ctx: { organizationId: string; userId: string; role: string },
+  confirmation: string,
+): Promise<ServiceResult<BusinessResetResult>> {
+  if (!hasPermission(ctx.role as any, 'organization.manage' as any)) {
+    return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'Only ADMIN can reset business data.' } }
+  }
+  if (confirmation.trim() !== 'RESET TALENT DATA') {
+    return {
+      ok: false,
+      error: {
+        code: 'CONFIRMATION_REQUIRED',
+        message: 'You must type "RESET TALENT DATA" exactly to confirm.',
+      },
+    }
+  }
+
+  // Verify at least one active ADMIN exists (defense in depth)
+  const adminCount = await db.user.count({
+    where: { organizationId: ctx.organizationId, role: 'ADMIN', status: 'ACTIVE' },
+  })
+  if (adminCount < 1) {
+    return { ok: false, error: { code: 'NO_ADMIN', message: 'Refusing to reset: no active ADMIN would remain.' } }
+  }
+
+  // Pre-compute counts (so we can include them in the audit log)
+  const preview = await previewBusinessReset(ctx)
+  if (!preview.ok) return { ok: false, error: preview.error }
+
+  // Execute the reset in one transaction. The order matters:
+  // children first, then parents.
+  const result = await db.$transaction(async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: ctx.organizationId } })
+    if (!org) throw new Error('Organization not found')
+
+    // 1. Interview evaluations (FK -> Interview)
+    const deletedEvaluations = await tx.interviewEvaluation.deleteMany({
+      where: { interview: { organizationId: ctx.organizationId } },
+    })
+    // 2. Interviews
+    const deletedInterviews = await tx.interview.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 3. Decisions
+    const deletedDecisions = await tx.candidateDecision.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 4. Offers
+    const deletedOffers = await tx.offer.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 5. Candidate skills (FK -> Candidate)
+    const deletedSkills = await tx.candidateSkill.deleteMany({
+      where: { candidate: { organizationId: ctx.organizationId } },
+    })
+    // 6. Candidates
+    const deletedCandidates = await tx.candidate.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 7. Hiring requests
+    const deletedHrs = await tx.hiringRequest.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 8. Activities
+    const deletedActivities = await tx.activity.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 9. AI conversations (FK -> AITask) — delete by task scope
+    const taskIds = await tx.aITask.findMany({
+      where: { organizationId: ctx.organizationId },
+      select: { id: true },
+    })
+    const deletedConvos = taskIds.length > 0
+      ? await tx.aIConversation.deleteMany({ where: { taskId: { in: taskIds.map(t => t.id) } } })
+      : { count: 0 }
+    // 10. AI tasks
+    const deletedAiTasks = await tx.aITask.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 11. Copilot confirmations
+    const deletedCopilot = await tx.copilotActionConfirmation.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+    // 12. Job descriptions
+    const deletedJobDescriptions = await tx.jobDescription.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
+
+    return {
+      deleted: {
+        hiringRequests: deletedHrs.count,
+        candidates: deletedCandidates.count,
+        candidateSkills: deletedSkills.count,
+        interviews: deletedInterviews.count,
+        interviewEvaluations: deletedEvaluations.count,
+        candidateDecisions: deletedDecisions.count,
+        offers: deletedOffers.count,
+        activities: deletedActivities.count,
+        aiTasks: deletedAiTasks.count,
+        aiConversations: deletedConvos.count,
+        copilotConfirmations: deletedCopilot.count,
+        jobDescriptions: deletedJobDescriptions.count,
+      },
+    }
+  }, { timeout: 60000, maxWait: 15000 })
+
+  // Recount preserved items
+  const preservedAdminCount = await db.user.count({
+    where: { organizationId: ctx.organizationId, role: 'ADMIN', status: 'ACTIVE' },
+  })
+  const preservedTotalUsers = await db.user.count({ where: { organizationId: ctx.organizationId } })
+  const preservedDepartments = await db.department.count({ where: { organizationId: ctx.organizationId } })
+  const preservedPromptTemplates = await db.promptTemplate.count({ where: { organizationId: ctx.organizationId } })
+  const preservedAuditLogs = await db.auditLog.count({ where: { organizationId: ctx.organizationId } })
+
+  // Audit
+  await recordAuditLog({
+    organizationId: ctx.organizationId,
+    actorId: ctx.userId,
+    action: 'DATA_RESET_EXECUTED' as never,
+    targetType: 'organization',
+    targetId: ctx.organizationId,
+    outcome: 'success',
+    metadata: {
+      resetId: randomUUID(),
+      organization: preview.data?.organization.name ?? 'unknown',
+      deleted: result.deleted,
+      preserved: {
+        adminCount: preservedAdminCount,
+        totalUsers: preservedTotalUsers,
+        departments: preservedDepartments,
+        promptTemplates: preservedPromptTemplates,
+        auditLogs: preservedAuditLogs,
+      },
+      // Never include secrets or plaintext invitation tokens.
+    } as any,
+  })
+
+  return {
+    ok: true,
+    data: {
+      deleted: result.deleted,
+      preserved: {
+        organization: preview.data?.organization.name ?? 'unknown',
+        adminCount: preservedAdminCount,
+        totalUsers: preservedTotalUsers,
+        departments: preservedDepartments,
+        promptTemplates: preservedPromptTemplates,
+        auditLogs: preservedAuditLogs,
+      },
+    },
+  }
+}
