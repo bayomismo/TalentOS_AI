@@ -314,6 +314,16 @@ async function main() {
       // Login
       await pageC.goto(`${PRODUCTION_URL}/login`)
       await pageC.waitForLoadState('networkidle').catch(() => null)
+      // The page may initially render the email input very quickly or
+      // after a network round-trip. Wait for it explicitly.
+      try {
+        await pageC.waitForSelector('input[type="email"]', { timeout: 15000 })
+      } catch {
+        const url = pageC.url()
+        const text = (await pageC.locator('body').textContent().catch(() => '')) ?? ''
+        console.log(`  -- login page body excerpt: ${text.slice(0, 200)} (url=${url})`)
+        throw new Error('login email input never appeared')
+      }
       await pageC.locator('input[type="email"]').first().fill(ctx.adminEmail)
       await pageC.locator('input[type="password"]').first().fill(ctx.adminPassword)
       await pageC.click('button[type="submit"]')
@@ -381,8 +391,18 @@ async function main() {
       check('AuditLog preserved (>=1 entry)', auditCount >= 1)
 
       // Verify admin can still log in
+      // First, sign out so we land on /login
+      await ctxC.clearCookies()
       await pageC.goto(`${PRODUCTION_URL}/login`)
       await pageC.waitForLoadState('networkidle').catch(() => null)
+      try {
+        await pageC.waitForSelector('input[type="email"]', { timeout: 15000 })
+      } catch {
+        const url = pageC.url()
+        const text = (await pageC.locator('body').textContent().catch(() => '')) ?? ''
+        console.log(`  -- login2 page body excerpt: ${text.slice(0, 300)} (url=${url})`)
+        throw new Error('login2 email input never appeared')
+      }
       await pageC.locator('input[type="email"]').first().fill(ctx.adminEmail)
       await pageC.locator('input[type="password"]').first().fill(ctx.adminPassword)
       await pageC.click('button[type="submit"]')
