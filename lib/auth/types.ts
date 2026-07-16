@@ -156,6 +156,11 @@ export interface AuthContext {
   /** For audit + invalidation checks. */
   passwordChangedAt: Date | null
   disabledAt: Date | null
+  /** Sprint 13 — onboarding state for the user. */
+  onboardingStatus: 'PENDING' | 'COMPLETED'
+  onboardingStep: string
+  /** Sprint 13 — onboarding state for the user's organization. */
+  organizationOnboardingStatus: 'PENDING' | 'COMPLETED'
 }
 
 /** Result shape used by server actions for unauthenticated / unauthorized

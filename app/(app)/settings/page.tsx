@@ -1,13 +1,29 @@
 'use client'
 
+/**
+ * Sprint 13 — Settings hub.
+ *
+ * The page is a client component for the section navigation. Each
+ * section is a separate component that:
+ *   - reads real data from the server (via server actions)
+ *   - persists real data via server actions
+ *   - shows "Coming soon" for features that are not implemented
+ *
+ * NO hardcoded mock data anywhere in this page.
+ */
+
 import { useEffect, useState } from 'react'
-import { BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon } from 'lucide-react'
+import {
+  BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon,
+} from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
-import { Button } from '@/components/ui/button'
 import { ChangePasswordCard } from '@/features/auth/components/change-password-card'
 import { TeamPage } from '@/features/user-management/components/team-page'
 import { DataManagementPage } from '@/features/data-management/components/data-management-page'
+import { ProfileSection } from './_components/profile-section'
+import { OrganizationSection } from './_components/organization-section'
+import { ComingSoonSection } from './_components/coming-soon-section'
 import { cn } from '@/lib/utils'
 
 const settingsSections = [
@@ -15,9 +31,9 @@ const settingsSections = [
   { id: 'organization', label: 'Organization', icon: BuildingIcon },
   { id: 'team', label: 'Team & Users', icon: UsersIcon, adminOnly: true },
   { id: 'data', label: 'Data Management', icon: DatabaseIcon, adminOnly: true },
-  { id: 'notifications', label: 'Notifications', icon: BellIcon },
+  { id: 'notifications', label: 'Notifications', icon: BellIcon, notImplemented: true, notImplementedLabel: 'Notification preferences will be configurable in a future release. We currently send all transactional alerts (interview reminders, offer activity) regardless of this setting.' },
   { id: 'security', label: 'Security', icon: ShieldIcon },
-  { id: 'integrations', label: 'Integrations', icon: KeyIcon },
+  { id: 'integrations', label: 'Integrations', icon: KeyIcon, notImplemented: true, notImplementedLabel: 'Native integrations (Google Calendar, Slack, Greenhouse) are planned for a future release. Today TalentOS works as a standalone workspace.' },
 ] as const
 
 type SettingsSectionId = (typeof settingsSections)[number]['id']
@@ -38,18 +54,13 @@ export default function SettingsPage() {
   }, [])
 
   const isAdmin = currentUserRole === 'ADMIN'
+  const activeSection = settingsSections.find(s => s.id === active)!
 
   return (
     <div className="space-y-8 p-8">
       <PageHeader
         title="Settings"
         description="Manage your account, organization, and platform preferences. All changes are saved to your workspace."
-        actions={
-          <>
-            <Button variant="outline">Discard changes</Button>
-            <Button>Save changes</Button>
-          </>
-        }
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
@@ -84,131 +95,40 @@ export default function SettingsPage() {
 
         <div className="space-y-6">
           {active === 'profile' && <ProfileSection />}
-          {active === 'organization' && <OrganizationSection />}
+          {active === 'organization' && isAdmin && <OrganizationSection />}
+          {active === 'organization' && !isAdmin && (
+            <Card>
+              <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+                Only administrators can edit organization settings.
+              </CardContent>
+            </Card>
+          )}
           {active === 'team' && isAdmin && <TeamPage currentUserId={currentUserId} currentUserRole={currentUserRole} />}
-          {active === 'team' && !isAdmin && <AccessDeniedCard />}
+          {active === 'team' && !isAdmin && (
+            <Card>
+              <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+                Only administrators can manage team members.
+              </CardContent>
+            </Card>
+          )}
           {active === 'data' && isAdmin && <DataManagementPage />}
-          {active === 'data' && !isAdmin && <AccessDeniedCard />}
-          {active === 'notifications' && <NotificationsSection />}
+          {active === 'data' && !isAdmin && (
+            <Card>
+              <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+                Only administrators can manage data.
+              </CardContent>
+            </Card>
+          )}
           {active === 'security' && <SecuritySection />}
-          {active === 'integrations' && <IntegrationsSection />}
+          {('notImplemented' in activeSection && activeSection.notImplemented) && (
+            <ComingSoonSection
+              title={activeSection.label}
+              description={(activeSection as any).notImplementedLabel}
+            />
+          )}
         </div>
       </div>
     </div>
-  )
-}
-
-function ProfileSection() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Profile information</CardTitle>
-        <CardDescription>
-          Update your personal details and how others see you across TalentOS.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 text-2xl">
-            👤
-          </div>
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-              Profile photo
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              PNG, JPG, or GIF up to 2MB.
-            </p>
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" size="sm">Upload new</Button>
-              <Button variant="ghost" size="sm">Remove</Button>
-            </div>
-          </div>
-        </div>
-
-        <FieldGrid>
-          <Field label="Full name" defaultValue="Jordan Rivera" />
-          <Field label="Email address" defaultValue="jordan.rivera@company.com" type="email" />
-          <Field label="Job title" defaultValue="Head of Talent" />
-          <Field label="Time zone" defaultValue="Europe/Madrid (UTC+1)" />
-        </FieldGrid>
-
-        <Field
-          label="Bio"
-          defaultValue="Building the future of talent acquisition with AI-first workflows."
-          multiline
-        />
-      </CardContent>
-    </Card>
-  )
-}
-
-function OrganizationSection() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Organization</CardTitle>
-        <CardDescription>
-          Your workspace details and branding preferences.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <FieldGrid>
-          <Field label="Organization name" defaultValue="Acme Talent Co." />
-          <Field label="Workspace URL" defaultValue="acme.talentos.app" />
-          <Field label="Industry" defaultValue="SaaS · B2B" />
-          <Field label="Company size" defaultValue="50–200 employees" />
-        </FieldGrid>
-        <Field
-          label="Default hiring workflow"
-          defaultValue="Standard pipeline with screening, two interview rounds, and an evaluation scorecard."
-          multiline
-        />
-      </CardContent>
-    </Card>
-  )
-}
-
-function AccessDeniedCard() {
-  return (
-    <Card>
-      <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
-        This section is only available to administrators.
-      </CardContent>
-    </Card>
-  )
-}
-function NotificationsSection() {
-  const channels = [
-    { id: 'email-digest', label: 'Daily email digest', desc: 'A summary of pipeline activity every morning.' },
-    { id: 'new-applicants', label: 'New applicants', desc: 'Get notified the moment someone applies.' },
-    { id: 'interview-reminders', label: 'Interview reminders', desc: '24h and 1h before every scheduled interview.' },
-    { id: 'hiring-updates', label: 'Hiring updates', desc: 'Status changes across all your open roles.' },
-  ]
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Notifications</CardTitle>
-        <CardDescription>
-          Choose what you want to be notified about and how.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="divide-y divide-slate-100 dark:divide-slate-700">
-        {channels.map(item => (
-          <div key={item.id} className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
-            <div>
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                {item.label}
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                {item.desc}
-              </p>
-            </div>
-            <Toggle defaultChecked />
-          </div>
-        ))}
-      </CardContent>
-    </Card>
   )
 }
 
@@ -216,169 +136,6 @@ function SecuritySection() {
   return (
     <div className="space-y-6">
       <ChangePasswordCard />
-      <Card>
-        <CardHeader>
-          <CardTitle>Security</CardTitle>
-          <CardDescription>
-            Keep your account safe with two-factor authentication and session management.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                Two-factor authentication
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                Add an extra layer of security at sign-in.
-              </p>
-            </div>
-            <Toggle defaultChecked />
-          </div>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                Single sign-on (SSO)
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                Use your identity provider (Okta, Azure AD, Google Workspace).
-              </p>
-            </div>
-            <Button variant="outline" size="sm">Configure</Button>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader
-          title="Active sessions"
-          description="Devices currently signed in to your TalentOS account."
-        />
-        <CardContent className="space-y-3">
-          {[
-            { device: 'MacBook Pro · Chrome', location: 'Madrid, Spain', current: true },
-            { device: 'iPhone 15 · Safari', location: 'Madrid, Spain', current: false },
-            { device: 'Windows · Edge', location: 'London, UK', current: false },
-          ].map(s => (
-            <div
-              key={s.device}
-              className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3 dark:border-slate-700"
-            >
-              <div>
-                <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                  {s.device}
-                  {s.current && (
-                    <span className="ml-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                      This device
-                    </span>
-                  )}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{s.location}</p>
-              </div>
-              {!s.current && (
-                <Button variant="ghost" size="sm">Revoke</Button>
-              )}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
     </div>
-  )
-}
-
-function IntegrationsSection() {
-  const integrations = [
-    { name: 'Greenhouse', desc: 'Sync candidates and jobs.', status: 'Connected' },
-    { name: 'Slack', desc: 'Pipeline alerts and approvals.', status: 'Connected' },
-    { name: 'Google Calendar', desc: 'Two-way interview sync.', status: 'Connected' },
-    { name: 'Lever', desc: 'Migrate historical data.', status: 'Available' },
-    { name: 'Ashby', desc: 'Bi-directional sync.', status: 'Available' },
-  ]
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Integrations</CardTitle>
-        <CardDescription>
-          Connect your existing tools. Most integrations take under a minute.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {integrations.map(i => (
-          <div
-            key={i.name}
-            className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3 dark:border-slate-700"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-sm font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                {i.name.charAt(0)}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                  {i.name}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{i.desc}</p>
-              </div>
-            </div>
-            <Button
-              variant={i.status === 'Connected' ? 'outline' : 'default'}
-              size="sm"
-            >
-              {i.status === 'Connected' ? 'Manage' : 'Connect'}
-            </Button>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-interface FieldProps {
-  label: string
-  defaultValue?: string
-  type?: string
-  multiline?: boolean
-  hint?: string
-}
-
-function Field({ label, defaultValue, type = 'text', multiline, hint }: FieldProps) {
-  return (
-    <div className="space-y-1.5">
-      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-        {label}
-      </label>
-      {multiline ? (
-        <textarea
-          defaultValue={defaultValue}
-          rows={3}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-        />
-      ) : (
-        <input
-          type={type}
-          defaultValue={defaultValue}
-          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-        />
-      )}
-      {hint && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">{hint}</p>
-      )}
-    </div>
-  )
-}
-
-function FieldGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-1 gap-5 md:grid-cols-2">{children}</div>
-}
-
-function Toggle({ defaultChecked }: { defaultChecked?: boolean }) {
-  return (
-    <label className="relative inline-flex h-5 w-9 cursor-pointer items-center">
-      <input
-        type="checkbox"
-        defaultChecked={defaultChecked}
-        className="peer sr-only"
-      />
-      <span className="h-5 w-9 rounded-full bg-slate-200 transition-colors peer-checked:bg-emerald-500 peer-focus:ring-2 peer-focus:ring-emerald-500/20 dark:bg-slate-700" />
-      <span className="absolute left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-    </label>
   )
 }

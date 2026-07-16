@@ -79,6 +79,9 @@ export async function requireAuth(): Promise<AuthResult<AuthContext>> {
       role: true,
       passwordChangedAt: true,
       disabledAt: true,
+      onboardingStatus: true,
+      onboardingStep: true,
+      organization: { select: { onboardingStatus: true } },
     },
   })
 
@@ -126,6 +129,9 @@ export async function requireAuth(): Promise<AuthResult<AuthContext>> {
       canReadOrgHiringData: ['ADMIN', 'TA_LEAD', 'RECRUITER', 'HIRING_MANAGER'].includes(user.role),
       passwordChangedAt: user.passwordChangedAt,
       disabledAt: user.disabledAt,
+      onboardingStatus: user.onboardingStatus,
+      onboardingStep: user.onboardingStep,
+      organizationOnboardingStatus: user.organization.onboardingStatus,
     },
   }
 }
@@ -304,6 +310,9 @@ async function getDevAuthContext(): Promise<AuthContext | null> {
         role: true,
         passwordChangedAt: true,
         disabledAt: true,
+        onboardingStatus: true,
+        onboardingStep: true,
+        organization: { select: { onboardingStatus: true } },
       },
       orderBy: { createdAt: 'asc' },
     })
@@ -319,6 +328,9 @@ async function getDevAuthContext(): Promise<AuthContext | null> {
       canReadOrgHiringData: true,
       passwordChangedAt: user.passwordChangedAt,
       disabledAt: user.disabledAt,
+      onboardingStatus: user.onboardingStatus,
+      onboardingStep: user.onboardingStep,
+      organizationOnboardingStatus: user.organization.onboardingStatus,
     }
   } catch {
     return null

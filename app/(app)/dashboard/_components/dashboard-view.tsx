@@ -327,11 +327,12 @@ function EmptyPositionsCard() {
     <EmptyState
       icon={SparklesIcon}
       title="No open positions yet"
-      description="Open the AI Recruiter, describe the role you need, and the engine will generate a complete hiring package you can publish."
+      description="Create your first hiring request to start collecting candidates. Use the AI Recruiter to generate a complete hiring package, or create one manually."
       actions={
-        <Link href="/ai-recruiter">
-          <Button>Open AI Recruiter</Button>
-        </Link>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Link href="/ai-recruiter"><Button>Open AI Recruiter</Button></Link>
+          <Link href="/hiring-requests"><Button variant="outline">Browse positions</Button></Link>
+        </div>
       }
     />
   )

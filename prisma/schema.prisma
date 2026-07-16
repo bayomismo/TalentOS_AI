@@ -45,6 +45,20 @@ enum EmploymentStatus {
   TERMINATED
 }
 
+enum OnboardingStatus {
+  PENDING
+  COMPLETED
+}
+
+enum OnboardingStep {
+  ACCOUNT_CREATED
+  ORG_PENDING
+  ORG_CREATED
+  COMPANY_CONFIGURED
+  TEAM_INVITED
+  COMPLETED
+}
+
 enum HiringRequestStatus {
   DRAFT
   OPEN
@@ -328,7 +342,15 @@ model Organization {
   website     String?
   industry    String?
   size        String?
+  /// Free-text country name (e.g. "United States"). For new orgs set
+  /// during the Company Setup onboarding step.
+  country     String?
+  /// IANA timezone (e.g. "America/New_York"). Set during onboarding.
+  timezone    String?
   description String?
+  /// Onboarding lifecycle for the workspace.
+  onboardingStatus      OnboardingStatus @default(COMPLETED)
+  onboardingCompletedAt DateTime?
   settings    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -398,6 +420,11 @@ model User {
   /// cannot log in and any existing sessions are rejected on next request.
   disabledAt        DateTime?
   lastLoginAt       DateTime?
+  /// Onboarding state for the first ADMIN of a freshly created
+  /// organization. Backfilled to COMPLETED for existing users in the
+  /// 20260720000002_sprint13_onboarding migration.
+  onboardingStatus  OnboardingStatus @default(COMPLETED)
+  onboardingStep    OnboardingStep   @default(COMPLETED)
   emailVerified     DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt

@@ -51,6 +51,10 @@ declare module 'next-auth/jwt' {
     organizationId: string
     role: import('@prisma/client').UserRole
     passwordChangedAt: string | null
+    // Sprint 13 — onboarding state, refreshed from DB on every request
+    onboardingStatus?: 'PENDING' | 'COMPLETED'
+    onboardingStep?: string
+    onboardingOrgStatus?: 'PENDING' | 'COMPLETED'
   }
 }
 
@@ -173,7 +177,9 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     async jwt({ token, user, trigger }) {
       // First call after sign-in: copy fields from the authorize() result
-      // onto the JWT. Subsequent calls: keep the existing token.
+      // onto the JWT. Subsequent calls: refresh onboarding state from
+      // the DB so the middleware has up-to-date info without a
+      // round-trip to the server.
       if (user) {
         const u = user as unknown as {
           id: string
@@ -185,6 +191,22 @@ export const authConfig: NextAuthConfig = {
         token.organizationId = u.organizationId
         token.role = u.role
         token.passwordChangedAt = u.passwordChangedAt
+      }
+      // Always re-read onboarding state on every token refresh
+      if (token.userId) {
+        const fresh = await db.user.findUnique({
+          where: { id: token.userId as string },
+          select: {
+            onboardingStatus: true,
+            onboardingStep: true,
+            organization: { select: { onboardingStatus: true } },
+          },
+        })
+        if (fresh) {
+          token.onboardingStatus = fresh.onboardingStatus
+          token.onboardingStep = fresh.onboardingStep
+          token.onboardingOrgStatus = fresh.organization.onboardingStatus
+        }
       }
       return token
     },
