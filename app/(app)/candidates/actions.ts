@@ -169,6 +169,22 @@ export async function createCandidateAction(
     return { ok: false, error: 'A candidate with this email already exists.' }
   }
 
+  // Prevent adding the caller's own user account as a candidate.
+  // Same email = same person. This is a real footgun: an admin adding
+  // themselves by mistake pollutes the pipeline and confuses the
+  // "who's a candidate" view. Refuse explicitly with a clear message.
+  const self = await db.user.findFirst({
+    where: { organizationId: orgId, email },
+    select: { id: true },
+  })
+  if (self) {
+    return {
+      ok: false,
+      error:
+        'That email belongs to a member of your organization. You can\u2019t add a team member as a candidate \u2014 invite them to your team instead.',
+    }
+  }
+
   const created = await db.candidate.create({
     data: {
       organizationId: orgId,

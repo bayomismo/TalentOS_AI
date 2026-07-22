@@ -1015,7 +1015,7 @@ function CandidateRow({
 
   return (
     <tr className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/50">
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         <Link href={`/candidates/${candidate.id}`} className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/10 text-lg">
             {candidate.avatar}
@@ -1028,7 +1028,7 @@ function CandidateRow({
           </div>
         </Link>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         <p className="text-slate-900 dark:text-slate-50">{candidate.currentTitle ?? '—'}</p>
         <p className="text-xs text-slate-500 dark:text-slate-400">
           {candidate.yearsExperience != null
@@ -1036,7 +1036,7 @@ function CandidateRow({
             : '—'}
         </p>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         <div className="flex max-w-[180px] flex-wrap gap-1">
           {candidate.topSkills.slice(0, 3).map(s => (
             <span
@@ -1051,7 +1051,7 @@ function CandidateRow({
           )}
         </div>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         {score !== null ? (
           <div className="flex items-center gap-2">
             <span className={cn('text-base font-bold tabular-nums', scoreColor)}>{score}</span>
@@ -1061,7 +1061,7 @@ function CandidateRow({
           <span className="text-xs italic text-slate-400">Not analyzed</span>
         )}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         {candidate.recommendation ? (
           <span
             className={cn(
@@ -1075,11 +1075,11 @@ function CandidateRow({
           <span className="text-xs italic text-slate-400">—</span>
         )}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 align-top">
         <StatusBadge stage={candidate.stage.toLowerCase() as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' | 'withdrawn'} />
       </td>
-      <td className="px-4 py-3">
-        <div className="relative flex items-center justify-end gap-2">
+      <td className="px-4 py-3 align-top">
+        <div className="relative flex items-start justify-end gap-2">
           <Button
             variant="ghost"
             size="sm"
