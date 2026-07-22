@@ -12,6 +12,7 @@ import { Card, CardContent } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { getCandidatesAction, type CandidatesPayload } from '../actions'
+import { AddCandidateModal } from './add-candidate-modal'
 import { cn } from '@/lib/utils'
 
 type Stage = 'applied' | 'screening' | 'interview' | 'offer' | 'hired'
@@ -30,10 +31,13 @@ const EMPTY: CandidatesPayload = { candidates: [] }
 
 export function CandidatesView() {
   const [data, setData] = useState<CandidatesPayload | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [, startTransition] = useTransition()
   const [search, setSearch] = useState('')
   const [stage, setStage] = useState<'all' | Stage>('all')
   const [view, setView] = useState<ViewMode>('grid')
+  const [addOpen, setAddOpen] = useState(false)
+  const [savedViewsOpen, setSavedViewsOpen] = useState(false)
 
   useEffect(() => {
     startTransition(async () => {
@@ -44,7 +48,7 @@ export function CandidatesView() {
         setData(EMPTY)
       }
     })
-  }, [])
+  }, [refreshKey])
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -88,11 +92,15 @@ export function CandidatesView() {
         }
         actions={
           <>
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() => setSavedViewsOpen(true)}
+              aria-haspopup="dialog"
+            >
               <FilterIcon className="h-4 w-4" aria-hidden />
               Saved views
             </Button>
-            <Button>
+            <Button onClick={() => setAddOpen(true)}>
               <UserPlusIcon className="h-4 w-4" aria-hidden />
               Add candidate
             </Button>
@@ -239,6 +247,78 @@ export function CandidatesView() {
           )}
         </CardContent>
       </Card>
+
+      <AddCandidateModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={() => setRefreshKey(k => k + 1)}
+      />
+
+      <SavedViewsDialog
+        open={savedViewsOpen}
+        onClose={() => setSavedViewsOpen(false)}
+      />
+    </div>
+  )
+}
+
+function SavedViewsDialog({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  // Escape to close + body-scroll lock.
+  useEffect(() => {
+    if (!open) return
+    const original = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = original
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="saved-views-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950/40">
+            <FilterIcon className="h-5 w-5 text-amber-600 dark:text-amber-300" aria-hidden />
+          </div>
+          <div className="flex-1">
+            <h2
+              id="saved-views-title"
+              className="text-base font-semibold text-slate-900 dark:text-slate-50"
+            >
+              Saved views — coming soon
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Save your current filters (stage, search) as a named view you can
+              switch back to later. The persistence layer is not built yet;
+              until then, use the search and stage filters at the top of this
+              page to narrow your list.
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={onClose}>Got it</Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

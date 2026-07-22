@@ -77,6 +77,116 @@ function stageToUI(stage: string): 'applied' | 'screening' | 'interview' | 'offe
   }
 }
 
+// -----------------------------------------------------------------------------
+// Hiring requests for the Add-Candidate select
+// -----------------------------------------------------------------------------
+
+export interface HiringRequestOption {
+  id: string
+  title: string
+}
+
+export async function getHiringRequestsForSelectAction(): Promise<{
+  ok: boolean
+  requests: HiringRequestOption[]
+}> {
+  const auth = await requireAuth()
+  if (!auth.ok) return { ok: false, requests: [] }
+  const orgId = auth.data.organizationId
+  const rows = await db.hiringRequest.findMany({
+    where: { organizationId: orgId, status: { in: ['OPEN', 'DRAFT'] } },
+    select: { id: true, title: true },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  })
+  return { ok: true, requests: rows }
+}
+
+// -----------------------------------------------------------------------------
+// createCandidateAction
+// -----------------------------------------------------------------------------
+
+export interface CreateCandidateInput {
+  firstName: string
+  lastName: string
+  email: string
+  hiringRequestId: string
+  source?: string | null
+  location?: string | null
+}
+
+export interface CreateCandidateResult {
+  ok: boolean
+  error?: string
+  candidateId?: string
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export async function createCandidateAction(
+  input: CreateCandidateInput,
+): Promise<CreateCandidateResult> {
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    return { ok: false, error: 'You must be signed in to add a candidate.' }
+  }
+  const allowedRoles = ['ADMIN', 'TA_LEAD', 'RECRUITER', 'HIRING_MANAGER']
+  if (!auth.data.isAdmin && !allowedRoles.includes(auth.data.role)) {
+    return { ok: false, error: 'You do not have permission to add candidates.' }
+  }
+  const orgId = auth.data.organizationId
+
+  const firstName = input.firstName.trim()
+  const lastName = input.lastName.trim()
+  const email = input.email.trim().toLowerCase()
+  const hiringRequestId = input.hiringRequestId.trim()
+
+  if (!firstName || !lastName) {
+    return { ok: false, error: 'First and last name are required.' }
+  }
+  if (!email || !EMAIL_RE.test(email)) {
+    return { ok: false, error: 'A valid email is required.' }
+  }
+  if (!hiringRequestId) {
+    return { ok: false, error: 'Please choose a hiring request for this candidate.' }
+  }
+
+  // Verify the hiring request belongs to this org.
+  const hr = await db.hiringRequest.findFirst({
+    where: { id: hiringRequestId, organizationId: orgId },
+    select: { id: true },
+  })
+  if (!hr) {
+    return { ok: false, error: 'That hiring request could not be found.' }
+  }
+
+  // Prevent duplicate email within the same org.
+  const existing = await db.candidate.findFirst({
+    where: { organizationId: orgId, email },
+    select: { id: true },
+  })
+  if (existing) {
+    return { ok: false, error: 'A candidate with this email already exists.' }
+  }
+
+  const created = await db.candidate.create({
+    data: {
+      organizationId: orgId,
+      hiringRequestId,
+      firstName,
+      lastName,
+      email,
+      source: input.source?.trim() || null,
+      location: input.location?.trim() || null,
+      stage: 'APPLIED',
+      status: 'ACTIVE',
+    },
+    select: { id: true },
+  })
+
+  return { ok: true, candidateId: created.id }
+}
+
 function avatarFor(name: string): string {
   // Simple deterministic emoji based on first letter
   const letter = name.charAt(0).toLowerCase()
