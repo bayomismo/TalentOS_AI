@@ -43,6 +43,10 @@ const STAGE_ORDER = ['applied', 'screening', 'interview', 'offer', 'hired'] as c
 
 export function CandidateProfileView({ id }: { id: string }) {
   const [candidate, setCandidate] = useState<CandidateDetail | null | undefined>(undefined)
+  const [comingSoon, setComingSoon] = useState<
+    | { title: string; description: string }
+    | null
+  >(null)
   const [, startTransition] = useTransition()
 
   useEffect(() => {
@@ -113,7 +117,16 @@ export function CandidateProfileView({ id }: { id: string }) {
         badge={<StatusBadge stage={candidate.stage} />}
         actions={
           <>
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setComingSoon({
+                  title: 'Message — coming soon',
+                  description:
+                    'Send templated email updates to this candidate from the platform. The mail-send pipeline is not wired yet.',
+                })
+              }
+            >
               <MailIcon className="h-4 w-4" aria-hidden />
               Message
             </Button>
@@ -135,11 +148,30 @@ export function CandidateProfileView({ id }: { id: string }) {
                 Open Interview Kit
               </Link>
             )}
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setComingSoon({
+                  title: 'Schedule interview — coming soon',
+                  description:
+                    'Pick a time, an interviewer, and a kit — schedule the interview and create the calendar event in one click. The scheduling workflow is in active development.',
+                })
+              }
+            >
               <CalendarIcon className="h-4 w-4" aria-hidden />
               Schedule interview
             </Button>
-            <Button>Move to next stage</Button>
+            <Button
+              onClick={() =>
+                setComingSoon({
+                  title: 'Move to next stage — coming soon',
+                  description:
+                    'Promote this candidate to the next pipeline stage with one click. The stage-transition action is not wired in this view yet. Today you can change stage by opening the candidate\'s full profile or re-running the AI Recruiter.',
+                })
+              }
+            >
+              Move to next stage
+            </Button>
           </>
         }
         meta={
@@ -462,9 +494,89 @@ export function CandidateProfileView({ id }: { id: string }) {
                 aria-label="Internal note"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
               />
-              <Button size="sm" className="mt-2">Save note</Button>
+              <Button
+                size="sm"
+                className="mt-2"
+                onClick={() =>
+                  setComingSoon({
+                    title: 'Save note — coming soon',
+                    description:
+                      'Internal notes are private to your hiring team and surface in the activity feed. The notes table is not wired in this view yet.',
+                  })
+                }
+              >
+                Save note
+              </Button>
             </CardContent>
           </Card>
+        </div>
+      </div>
+
+      <CandidateActionComingSoonDialog
+        open={!!comingSoon}
+        title={comingSoon?.title ?? ''}
+        description={comingSoon?.description ?? ''}
+        onClose={() => setComingSoon(null)}
+      />
+    </div>
+  )
+}
+
+function CandidateActionComingSoonDialog({
+  open,
+  title,
+  description,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  description: string
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!open) return
+    const original = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = original
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cand-cs-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950/40">
+            <ClockIcon className="h-5 w-5 text-amber-600 dark:text-amber-300" aria-hidden />
+          </div>
+          <div className="flex-1">
+            <h2
+              id="cand-cs-title"
+              className="text-base font-semibold text-slate-900 dark:text-slate-50"
+            >
+              {title}
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              {description}
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={onClose}>Got it</Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

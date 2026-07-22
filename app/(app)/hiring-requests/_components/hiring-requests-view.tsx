@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { FilterIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/shared/card'
@@ -34,6 +35,7 @@ export function HiringRequestsView() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [department, setDepartment] = useState<DepartmentFilter>('all')
+  const [customizeOpen, setCustomizeOpen] = useState(false)
 
   useEffect(() => {
     startTransition(async () => {
@@ -103,14 +105,20 @@ export function HiringRequestsView() {
         description="Track every open role in one place. Filter by department, status, or search across job titles to see exactly what your team is hiring for."
         actions={
           <>
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() => setCustomizeOpen(true)}
+              aria-haspopup="dialog"
+            >
               <SlidersHorizontalIcon className="h-4 w-4" aria-hidden />
               Customize view
             </Button>
-            <Button>
-              <PlusIcon className="h-4 w-4" aria-hidden />
-              New hiring request
-            </Button>
+            <Link href="/ai-recruiter">
+              <Button>
+                <PlusIcon className="h-4 w-4" aria-hidden />
+                New hiring request
+              </Button>
+            </Link>
           </>
         }
       />
@@ -180,6 +188,71 @@ export function HiringRequestsView() {
           )}
         </CardContent>
       </Card>
+
+      <CustomizeViewComingSoonDialog
+        open={customizeOpen}
+        onClose={() => setCustomizeOpen(false)}
+      />
+    </div>
+  )
+}
+
+function CustomizeViewComingSoonDialog({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!open) return
+    const original = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = original
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="customize-cs-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950/40">
+            <SlidersHorizontalIcon className="h-5 w-5 text-amber-600 dark:text-amber-300" aria-hidden />
+          </div>
+          <div className="flex-1">
+            <h2
+              id="customize-cs-title"
+              className="text-base font-semibold text-slate-900 dark:text-slate-50"
+            >
+              Customize view — coming soon
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Choose which columns appear in the table, save the layout as
+              your default, and switch between saved views per team. The
+              persistence layer is not built yet. Until then, use the
+              filters above the table to narrow your list.
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={onClose}>Got it</Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

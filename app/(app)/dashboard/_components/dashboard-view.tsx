@@ -54,6 +54,7 @@ const EMPTY_DATA: DashboardData = {
 export function DashboardView() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
     startTransition(async () => {
@@ -123,14 +124,20 @@ export function DashboardView() {
         }
         actions={
           <>
-            <Button variant="outline">
+            <Button
+              variant="outline"
+              onClick={() => setExportOpen(true)}
+              aria-haspopup="dialog"
+            >
               <DownloadIcon className="h-4 w-4" />
               Export
             </Button>
-            <Button>
-              <SparklesIcon className="h-4 w-4" />
-              New hiring package
-            </Button>
+            <Link href="/ai-recruiter">
+              <Button>
+                <SparklesIcon className="h-4 w-4" />
+                New hiring package
+              </Button>
+            </Link>
           </>
         }
       />
@@ -152,9 +159,11 @@ export function DashboardView() {
         title="Open positions"
         description="Every role your team is actively hiring for."
         action={
-          <Button variant="outline" size="sm">
-            View all
-          </Button>
+          <Link href="/hiring-requests">
+            <Button variant="outline" size="sm">
+              View all
+            </Button>
+          </Link>
         }
       >
         {data.positions.length > 0 ? (
@@ -218,6 +227,67 @@ export function DashboardView() {
           </CardContent>
         </Card>
       </Section>
+
+      <ExportComingSoonDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+    </div>
+  )
+}
+
+function ExportComingSoonDialog({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!open) return
+    const original = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = original
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="export-cs-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950/40">
+            <DownloadIcon className="h-5 w-5 text-amber-600 dark:text-amber-300" aria-hidden />
+          </div>
+          <div className="flex-1">
+            <h2
+              id="export-cs-title"
+              className="text-base font-semibold text-slate-900 dark:text-slate-50"
+            >
+              Export — coming soon
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Download your live dashboard as PDF or CSV. The export pipeline
+              is not built yet. For now, take a screenshot or copy the
+              numbers you need from the Analytics page.
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={onClose}>Got it</Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
