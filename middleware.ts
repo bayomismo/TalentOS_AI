@@ -44,6 +44,7 @@ const PUBLIC_PREFIXES = [
   '/manifest',
   '/static',
   '/api/auth',
+  '/api/health',
   '/api/public',
 ]
 
