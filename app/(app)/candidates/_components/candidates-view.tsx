@@ -6,13 +6,14 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState, useTransition } from 'react'
-import { FilterIcon, MailIcon, SearchIcon, StarIcon, UserPlusIcon } from 'lucide-react'
+import { FilterIcon, MailIcon, SearchIcon, StarIcon, UploadIcon, UserPlusIcon, XIcon } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { getCandidatesAction, type CandidatesPayload } from '../actions'
 import { AddCandidateModal } from './add-candidate-modal'
+import { ImportCsvModal } from './import-csv-modal'
 import { cn } from '@/lib/utils'
 
 type Stage = 'applied' | 'screening' | 'interview' | 'offer' | 'hired'
@@ -37,6 +38,12 @@ export function CandidatesView() {
   const [stage, setStage] = useState<'all' | Stage>('all')
   const [view, setView] = useState<ViewMode>('grid')
   const [addOpen, setAddOpen] = useState(false)
+  const [csvOpen, setCsvOpen] = useState(false)
+  const [hiringRequests, setHiringRequests] = useState<{ id: string; title: string }[]>([])
+  // Sprint 17 — bulk selection
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkPending, setBulkPending] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
   const [savedViewsOpen, setSavedViewsOpen] = useState(false)
 
   useEffect(() => {
@@ -49,6 +56,44 @@ export function CandidatesView() {
       }
     })
   }, [refreshKey])
+
+  // Load hiring requests for the CSV import picker
+  useEffect(() => {
+    let cancelled = false
+    import('../actions').then(async ({ getHiringRequestsForSelectAction }) => {
+      const hrs = await getHiringRequestsForSelectAction()
+      if (!cancelled) setHiringRequests(hrs)
+    }).catch(() => null)
+    return () => { cancelled = true }
+  }, [])
+
+  // Sprint 17 — bulk move
+  async function bulkMove(toStage: 'SCREENING' | 'INTERVIEW' | 'OFFER' | 'REJECTED' | 'HIRED') {
+    if (selected.size === 0) return
+    if (selected.size > 100) {
+      setBulkError('Maximum 100 candidates per bulk action.')
+      return
+    }
+    setBulkPending(true)
+    setBulkError(null)
+    try {
+      const { bulkMoveCandidatesAction } = await import('@/app/(app)/hiring-requests/[id]/candidates/actions')
+      const r = await bulkMoveCandidatesAction({
+        candidateIds: Array.from(selected),
+        toStage: toStage as never,
+      })
+      if (!r.ok) {
+        setBulkError(r.error.message)
+        return
+      }
+      setSelected(new Set())
+      setRefreshKey(k => k + 1)
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : 'Bulk action failed.')
+    } finally {
+      setBulkPending(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -103,6 +148,10 @@ export function CandidatesView() {
             <Button onClick={() => setAddOpen(true)}>
               <UserPlusIcon className="h-4 w-4" aria-hidden />
               Add candidate
+            </Button>
+            <Button variant="outline" onClick={() => setCsvOpen(true)}>
+              <UploadIcon className="h-4 w-4" aria-hidden />
+              Import CSV
             </Button>
           </>
         }
@@ -192,10 +241,70 @@ export function CandidatesView() {
                 ))}
               </div>
             ) : (
+              <>
+              {selected.size > 0 && (
+                <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/40">
+                  <div className="flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-200">
+                    <strong>{selected.size}</strong> selected
+                    <button
+                      type="button"
+                      onClick={() => setSelected(new Set())}
+                      className="ml-2 text-emerald-700 hover:underline dark:text-emerald-300"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      disabled={bulkPending}
+                      onChange={async (e) => {
+                        const to = e.target.value
+                        if (!to) return
+                        await bulkMove(to as 'SCREENING' | 'INTERVIEW' | 'OFFER' | 'REJECTED' | 'HIRED')
+                        e.currentTarget.value = ''
+                      }}
+                      className="h-8 rounded border border-emerald-300 bg-white px-2 text-xs dark:border-emerald-800 dark:bg-slate-800 dark:text-slate-100"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>Move to…</option>
+                      <option value="SCREENING">Screening</option>
+                      <option value="INTERVIEW">Interview</option>
+                      <option value="OFFER">Offer</option>
+                      <option value="REJECTED">Rejected</option>
+                      <option value="HIRED">Hired</option>
+                    </select>
+                    <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkPending}>
+                      <XIcon className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {bulkError && (
+                <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+                  {bulkError}
+                </div>
+              )}
               <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                 <table className="w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
                     <tr>
+                      <th className="w-10 px-3 py-3 text-left">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all visible candidates"
+                          checked={filtered.length > 0 && filtered.every(c => selected.has(c.id))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelected(new Set([...selected, ...filtered.map(c => c.id)]))
+                            } else {
+                              const next = new Set(selected)
+                              filtered.forEach(c => next.delete(c.id))
+                              setSelected(next)
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                        />
+                      </th>
                       <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-50">Candidate</th>
                       <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-50">Role</th>
                       <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-50">Stage</th>
@@ -206,6 +315,21 @@ export function CandidatesView() {
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                     {filtered.map(c => (
                       <tr key={c.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                        <td className="w-10 px-3 py-3 align-top">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${c.name}`}
+                            checked={selected.has(c.id)}
+                            onChange={(e) => {
+                              const next = new Set(selected)
+                              if (e.target.checked) next.add(c.id)
+                              else next.delete(c.id)
+                              setSelected(next)
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <Link href={`/candidates/${c.id}`} className="flex items-center gap-3">
                             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-base">
@@ -234,6 +358,7 @@ export function CandidatesView() {
                   </tbody>
                 </table>
               </div>
+              </>
             )
           ) : (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-10 text-center dark:border-slate-700 dark:bg-slate-800/40">
@@ -252,6 +377,13 @@ export function CandidatesView() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onCreated={() => setRefreshKey(k => k + 1)}
+      />
+
+      <ImportCsvModal
+        open={csvOpen}
+        onClose={() => setCsvOpen(false)}
+        hiringRequests={hiringRequests}
+        onImported={() => setRefreshKey(k => k + 1)}
       />
 
       <SavedViewsDialog

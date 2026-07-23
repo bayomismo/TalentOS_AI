@@ -1044,3 +1044,89 @@ function parseDateLoose(s: string): Date | null {
   return null
 }
 
+
+// ---------------------------------------------------------------------------
+// Sprint 17 — bulk candidate actions
+// ---------------------------------------------------------------------------
+
+export interface BulkMoveCandidatesInput {
+  candidateIds: string[]
+  toStage: ApplicationStage
+  reason?: string
+}
+
+export interface BulkMoveCandidatesSuccess {
+  movedCount: number
+  skippedCount: number
+}
+
+const BULK_LIMIT = 100
+
+export async function bulkMoveCandidatesAction(
+  input: BulkMoveCandidatesInput
+): Promise<ActionResult<BulkMoveCandidatesSuccess>> {
+  try {
+    const auth = await requireAuth()
+    if (!auth.ok) return toActionFailure(auth)
+    const orgId = auth.data.organizationId
+    const actorId = auth.data.userId
+
+    if (!Array.isArray(input.candidateIds) || input.candidateIds.length === 0) {
+      return { ok: false, error: { code: 'INVALID_INPUT', message: 'No candidates selected.', retryable: false } }
+    }
+    if (input.candidateIds.length > BULK_LIMIT) {
+      return { ok: false, error: { code: 'TOO_MANY', message: `Maximum ${BULK_LIMIT} candidates at once.`, retryable: false } }
+    }
+
+    // Validate the org owns all of them
+    const owned = await db.candidate.findMany({
+      where: { id: { in: input.candidateIds }, organizationId: orgId },
+      select: { id: true, stage: true, firstName: true, lastName: true, hiringRequestId: true },
+    })
+    const ownedIds = new Set(owned.map(c => c.id))
+    const skippedCount = input.candidateIds.filter(id => !ownedIds.has(id)).length
+    const toUpdate = owned.filter(c => c.stage !== input.toStage)
+
+    if (toUpdate.length === 0) {
+      return { ok: true, data: { movedCount: 0, skippedCount } }
+    }
+
+    const now = new Date()
+    await db.$transaction([
+      db.candidate.updateMany({
+        where: { id: { in: toUpdate.map(c => c.id) } },
+        data: { stage: input.toStage },
+      }),
+      // Activity per candidate (capped for performance)
+      ...toUpdate.slice(0, 50).flatMap(c => [
+        db.activity.create({
+          data: {
+            organizationId: orgId,
+            type: 'CANDIDATE_MOVED' as never,
+            title: `Moved to ${input.toStage}`,
+            description: input.reason ?? `Bulk moved by ${(await db.user.findUnique({ where: { id: actorId } }))?.firstName ?? 'admin'}`,
+            actorId,
+            candidateId: c.id,
+            hiringRequestId: c.hiringRequestId,
+            occurredAt: now,
+          },
+        }),
+      ]),
+    ])
+
+    await recordAuditLog({
+      organizationId: orgId,
+      actorId,
+      action: 'CANDIDATES_BULK_MOVED' as never,
+      targetType: 'candidate',
+      targetId: toUpdate[0].id,
+      outcome: 'success',
+      metadata: { count: toUpdate.length, toStage: input.toStage } as any,
+    }).catch(() => null)
+
+    revalidatePath('/candidates')
+    return { ok: true, data: { movedCount: toUpdate.length, skippedCount } }
+  } catch (err) {
+    return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Unexpected error', retryable: true } }
+  }
+}
