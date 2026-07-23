@@ -15,6 +15,7 @@
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import { getEventBus } from '@/lib/events'
 import { interviewKitOutputSchema, type InterviewKitOutput } from '@/lib/ai/schemas/interview-kit.schema'
 import type { GenerateInterviewKitInput, InterviewKitView } from '../types'
@@ -174,7 +175,26 @@ export async function generateInterviewKitService(
       },
     }
 
+    // Sprint 16 — per-org AI quota. Refuse if over limit.
+    const quotaCheck = await enforceAiQuota(candidate.organizationId, 'interview_kit')
+    if (!quotaCheck.allowed) {
+      return {
+        ok: false,
+        error: {
+          code: 'AI_LIMIT_REACHED',
+          message: quotaCheck.message ?? 'AI limit reached for this month.',
+          retryable: false,
+        },
+      }
+    }
+
     const result = await getAIEngine().generateInterviewKit(engineInput)
+    await recordAiUsage({
+      organizationId: candidate.organizationId,
+      feature: 'interview_kit',
+      tokensIn: result.usage.inputTokens,
+      tokensOut: result.usage.outputTokens,
+    })
     const kit: InterviewKitOutput = result.data
     // Defensive defaults: the model sometimes forgets to copy the candidate
     // name / position from the prompt. We fill them in from the DB so the

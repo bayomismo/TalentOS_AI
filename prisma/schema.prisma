@@ -351,6 +351,13 @@ model Organization {
   /// Onboarding lifecycle for the workspace.
   onboardingStatus      OnboardingStatus @default(COMPLETED)
   onboardingCompletedAt DateTime?
+  /// Sprint 16 — AI quota. Maximum AI calls allowed per calendar month
+  /// for this org. Default 5,000 (free tier). Set to -1 to disable the
+  /// cap (admin/enterprise). Soft warning is shown in the UI at 80%.
+  aiMonthlyQuota        Int      @default(5000)
+  /// Tracks whether the 80% warning has been emitted this cycle, so we
+  /// only warn once per reset. Reset to false on the 1st of each month.
+  aiMonthlyWarned       Boolean  @default(false)
   settings    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -363,6 +370,7 @@ model Organization {
   activities         Activity[]
   candidateDecisions CandidateDecision[]
   aiTasks            AITask[]
+  aiUsage            AIUsage[]
   promptTemplates    PromptTemplate[]
   offers             Offer[]
   interviews         Interview[]
@@ -371,6 +379,38 @@ model Organization {
   copilotConfirmations CopilotActionConfirmation[]
 
   @@index([slug])
+}
+
+// ---------------------------------------------------------------------------
+// AIUsage — Sprint 16
+//
+// One row per successful AI call. Tenant-scoped via organizationId.
+// Used by the rate-limit gate to enforce per-org monthly quotas.
+// ---------------------------------------------------------------------------
+model AIUsage {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @db.Uuid
+  /// Which feature used the call: job_description, cv_analysis,
+  /// candidate_ranking, interview_kit, decision_brief, offer_letter,
+  /// copilot, etc. Free-form string for forward compat.
+  feature        String
+  /// Optional: link to the AITask that produced this call.
+  taskId         String?  @db.Uuid
+  /// Tokens in / out as reported by the provider. May be null for
+  /// providers that don't report it.
+  tokensIn       Int?
+  tokensOut      Int?
+  /// Whether the call succeeded. Failed calls are still logged (so we
+  /// can see patterns of abuse) but don't count toward the quota.
+  success        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         AITask?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, feature, createdAt])
+  @@index([taskId])
 }
 
 model Department {
@@ -978,6 +1018,7 @@ model AITask {
   createdBy      User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
   offers         Offer[]
   conversations  AIConversation[]
+  usage          AIUsage[]
 
   @@index([organizationId, status])
   @@index([organizationId, type])

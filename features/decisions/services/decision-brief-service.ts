@@ -12,6 +12,7 @@
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import { getEventBus } from '@/lib/events'
 import {
   buildDecisionBriefSystemPrompt,
@@ -171,7 +172,26 @@ export async function generateDecisionBriefService(input: {
     const userPrompt = buildDecisionBriefUserPrompt(engineInput)
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
+    // Sprint 16 — per-org AI quota. Refuse if over limit.
+    const quotaCheck = await enforceAiQuota(hr.organizationId, 'decision_brief')
+    if (!quotaCheck.allowed) {
+      return {
+        ok: false,
+        error: {
+          code: 'AI_LIMIT_REACHED',
+          message: quotaCheck.message ?? 'AI limit reached for this month.',
+          retryable: false,
+        },
+      }
+    }
+
     const engineResult = await getAIEngine().generateDecisionBrief(engineInput)
+    await recordAiUsage({
+      organizationId: hr.organizationId,
+      feature: 'decision_brief',
+      tokensIn: engineResult.usage.inputTokens,
+      tokensOut: engineResult.usage.outputTokens,
+    })
     const output = engineResult.data
     const task = await persistDecisionBriefTask({
       organizationId: hr.organizationId,

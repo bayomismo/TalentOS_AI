@@ -10,6 +10,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 
 const ResponseSchema = z.object({
   answer: z.string().min(1),
@@ -35,6 +36,8 @@ export interface GenerateArgs {
   toolResults: Array<{ toolId: string; data: unknown; recordHrefs: string[] }>
   /** Optional recent conversation for context (PART 11). */
   history?: Array<{ role: 'USER' | 'ASSISTANT'; content: string }>
+  /** Sprint 16 — org context for AI quota. */
+  organizationId: string
 }
 
 const SYSTEM_PROMPT = `You are TalentOS AI Copilot, a read-only intelligence layer.
@@ -79,8 +82,26 @@ export async function generateCopilotResponse(args: GenerateArgs): Promise<Copil
 
   const userPrompt = `# USER QUESTION\n${args.userMessage}${historyBlock}\n\n# TOOL RESULTS (grounded facts)\n${context}\n\n# REMINDER\nReturn JSON only. Do not invent data. Do not create external URLs. Do not perform actions.`
 
+  // Sprint 16 — per-org AI quota. Refuse if over limit.
+  const quotaCheck = await enforceAiQuota(args.organizationId, 'copilot')
+  if (!quotaCheck.allowed) {
+    return {
+      answer: quotaCheck.message ?? 'AI limit reached for this month.',
+      findings: [],
+      records: [],
+      suggestedQuestions: [],
+      limitations: ['AI monthly limit reached. The limit resets on ' + quotaCheck.resetAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + '.'],
+    }
+  }
+
   const engine = getAIEngine()
   const result = await engine.callCopilotRouter(SYSTEM_PROMPT, userPrompt)
+  await recordAiUsage({
+    organizationId: args.organizationId,
+    feature: 'copilot',
+    tokensIn: result.usage?.inputTokens,
+    tokensOut: result.usage?.outputTokens,
+  })
   const raw = (result.data as string).trim()
   const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
   let parsed: CopilotResponse

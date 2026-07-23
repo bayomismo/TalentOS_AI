@@ -25,6 +25,7 @@ import {
 } from '@/lib/offers/state-machine'
 import { checkOfferEligibility } from '@/lib/offers/eligibility'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import {
   buildOfferLetterUserPrompt,
   offerLetterPrompt,
@@ -383,8 +384,20 @@ export async function generateOfferDraft(
   let draft: OfferLetterOutput
   let modelUsed = 'unknown'
   try {
+    // Sprint 16 — per-org AI quota. Refuse if over limit.
+    const quotaCheck = await enforceAiQuota(ctx.organizationId, 'offer_letter')
+    if (!quotaCheck.allowed) {
+      throw new Error(quotaCheck.message ?? 'AI_LIMIT_REACHED')
+    }
+
     const engine = getAIEngine()
     const result = await engine.generateOfferLetter(facts)
+    await recordAiUsage({
+      organizationId: ctx.organizationId,
+      feature: 'offer_letter',
+      tokensIn: result.usage.inputTokens,
+      tokensOut: result.usage.outputTokens,
+    })
     draft = result.data
     modelUsed = result.model
     await db.aITask.update({

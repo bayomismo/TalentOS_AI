@@ -203,6 +203,7 @@ export async function runReadToolsAndGenerateResponse(args: {
       userMessage,
       toolResults,
       history,
+      organizationId: ctx.organizationId,
     })
     modelUsed = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'
   } catch (err) {

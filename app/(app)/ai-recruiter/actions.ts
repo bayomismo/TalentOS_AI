@@ -19,6 +19,7 @@ import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage, recordAiFailure } from '@/lib/ai/quota'
 import { AIEngineError, ProviderNotConfiguredError } from '@/lib/ai/errors/ai-engine-error'
 import type {
   EmploymentType,
@@ -75,8 +76,24 @@ export async function generateJobDescriptionAction(
     const orgId = auth.data.organizationId
     const actorId = auth.data.userId
 
+    // Sprint 16 — per-org AI quota. Refuse before spending tokens.
+    const quota = await enforceAiQuota(orgId, 'job_description')
+    if (!quota.allowed) {
+      return {
+        ok: false,
+        error: { code: 'AI_LIMIT_REACHED', message: quota.message ?? 'AI limit reached for this month.' },
+        meta: { used: quota.used, quota: quota.quota, resetAt: quota.resetAt.toISOString() },
+      }
+    }
+
     const engine = getAIEngine()
     const result = await engine.generateJobDescription(input)
+    await recordAiUsage({
+      organizationId: orgId,
+      feature: 'job_description',
+      tokensIn: result.usage.inputTokens,
+      tokensOut: result.usage.outputTokens,
+    })
 
     // Persist the AITask so the wizard run is attributable + auditable.
     const aiTask = await db.aITask.create({

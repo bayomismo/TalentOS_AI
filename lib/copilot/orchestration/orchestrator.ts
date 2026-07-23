@@ -27,6 +27,7 @@ import {
   getAllowedActionIds,
 } from '../actions/registry'
 import { recordAuditLog } from '@/lib/auth/audit'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import { MAX_TOOL_CALLS_PER_TURN } from '../types'
 import type { CopilotAuthContext } from '../types'
 import type { ActionExecutionResult, ActionFailure } from '../actions/types'
@@ -374,6 +375,16 @@ async function handleReadQuery(
   args: AskCopilotArgs,
   start: number,
 ): Promise<AskCopilotResult> {
+  // Sprint 16 — per-org AI quota. Refuse if over limit.
+  const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
+  if (!quotaCheck.allowed) {
+    return {
+      answer: quotaCheck.message ?? 'AI limit reached for this month.',
+      toolIds: [],
+      durationMs: Date.now() - start,
+    }
+  }
+
   const intent = await routeReadIntent(args.userMessage, { preferDeterministic: true })
   if ('injectionDetected' in intent && intent.injectionDetected) {
     await recordAuditLog({
@@ -491,8 +502,23 @@ Do not wrap in markdown. Emit JSON only.`
   // fabricate arguments. Return a clear "extraction failed" outcome so the
   // user can retry. PART 4: this is NOT a business mutation, so it's safe.
   try {
+    // Sprint 16 — per-org AI quota. Refuse if over limit.
+    const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
+    if (!quotaCheck.allowed) {
+      return {
+        outcome: 'failed',
+        message: quotaCheck.message ?? 'AI limit reached for this month.',
+      }
+    }
+
     const engine = getAIEngine()
     const result = await engine.callCopilotRouter(systemPrompt, userPrompt)
+    await recordAiUsage({
+      organizationId: ctx.organizationId,
+      feature: 'copilot',
+      tokensIn: result.usage?.inputTokens,
+      tokensOut: result.usage?.outputTokens,
+    })
     // The provider may return a string OR a parsed object depending on
     // the response format. Handle both.
     let raw: string

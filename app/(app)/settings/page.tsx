@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, UserIcon, UsersIcon,
+  BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, SparklesIcon, UserIcon, UsersIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
@@ -23,6 +23,7 @@ import { TeamPage } from '@/features/user-management/components/team-page'
 import { DataManagementPage } from '@/features/data-management/components/data-management-page'
 import { ProfileSection } from './_components/profile-section'
 import { OrganizationSection } from './_components/organization-section'
+import { AiUsageSection } from './_components/ai-usage-section'
 import { ComingSoonSection } from './_components/coming-soon-section'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +32,7 @@ const settingsSections = [
   { id: 'organization', label: 'Organization', icon: BuildingIcon },
   { id: 'team', label: 'Team & Users', icon: UsersIcon, adminOnly: true },
   { id: 'data', label: 'Data Management', icon: DatabaseIcon, adminOnly: true },
+  { id: 'ai-usage', label: 'AI Usage', icon: SparklesIcon },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, notImplemented: true, notImplementedLabel: 'Notification preferences will be configurable in a future release. We currently send all transactional alerts (interview reminders, offer activity) regardless of this setting.' },
   { id: 'security', label: 'Security', icon: ShieldIcon },
   { id: 'integrations', label: 'Integrations', icon: KeyIcon, notImplemented: true, notImplementedLabel: 'Native integrations (Google Calendar, Slack, Greenhouse) are planned for a future release. Today TalentOS works as a standalone workspace.' },
@@ -119,6 +121,7 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
+          {active === 'ai-usage' && <AiUsageSection />}
           {active === 'security' && <SecuritySection />}
           {('notImplemented' in activeSection && activeSection.notImplemented) && (
             <ComingSoonSection

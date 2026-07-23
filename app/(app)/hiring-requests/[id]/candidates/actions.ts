@@ -24,6 +24,7 @@ import { db } from '@/lib/db'
 import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import { getFileStorage } from '@/lib/storage'
 import { parseCV, CVError } from '@/lib/cv'
 import { getEventBus } from '@/lib/events'
@@ -343,6 +344,19 @@ export async function uploadCVsAction(
         const { url: storageUrl } = await storage.put(storageKey, buffer, parsed.mimeType)
     
         // Run AI CV analysis with job context
+            // Sprint 16 — per-org AI quota. Refuse if over limit.
+            const quotaCheck = await enforceAiQuota(orgId, 'cv_analysis')
+            if (!quotaCheck.allowed) {
+              return {
+                ok: false,
+                error: {
+                  code: 'AI_LIMIT_REACHED',
+                  message: quotaCheck.message ?? 'AI limit reached for this month.',
+                  retryable: false,
+                },
+                meta: { used: quotaCheck.used, quota: quotaCheck.quota, resetAt: quotaCheck.resetAt.toISOString() },
+              }
+            }
             const analysisResult = await engine.analyzeCV({
           cvText: parsed.text,
           jobContext: {
@@ -352,10 +366,28 @@ export async function uploadCVsAction(
             niceToHaveSkills: hr.jobDescription.niceToHave,
           },
         })
+            await recordAiUsage({
+              organizationId: orgId,
+              feature: 'cv_analysis',
+              tokensIn: analysisResult.usage.inputTokens,
+              tokensOut: analysisResult.usage.outputTokens,
+            })
 
         const profile = analysisResult.data
     
         // Run rank against the JD
+            const rankingQuota = await enforceAiQuota(orgId, 'candidate_ranking')
+            if (!rankingQuota.allowed) {
+              return {
+                ok: false,
+                error: {
+                  code: 'AI_LIMIT_REACHED',
+                  message: rankingQuota.message ?? 'AI limit reached for this month.',
+                  retryable: false,
+                },
+                meta: { used: rankingQuota.used, quota: rankingQuota.quota, resetAt: rankingQuota.resetAt.toISOString() },
+              }
+            }
             const rankingResult = await engine.rankCandidate({
           candidateId: '__pending__', // assigned after create
           hiringRequestId: hr.id,
@@ -388,6 +420,12 @@ export async function uploadCVsAction(
           },
         })
         const ranking: CandidateRankingOutput = rankingResult.data
+        await recordAiUsage({
+          organizationId: orgId,
+          feature: 'candidate_ranking',
+          tokensIn: rankingResult.usage.inputTokens,
+          tokensOut: rankingResult.usage.outputTokens,
+        })
     
         // Persist candidate + related rows in a single transaction.
         const [nameFirst, ...nameRest] = profile.fullName.trim().split(/\s+/)
@@ -729,6 +767,21 @@ export async function reanalyzeCandidateAction(
     const jd = candidate.hiringRequest.jobDescription
 
     const engine = getAIEngine()
+
+    // Sprint 16 — per-org AI quota. Refuse if over limit.
+    const quotaCheck = await enforceAiQuota(orgId, 'candidate_ranking')
+    if (!quotaCheck.allowed) {
+      return {
+        ok: false,
+        error: {
+          code: 'AI_LIMIT_REACHED',
+          message: quotaCheck.message ?? 'AI limit reached for this month.',
+          retryable: false,
+        },
+        meta: { used: quotaCheck.used, quota: quotaCheck.quota, resetAt: quotaCheck.resetAt.toISOString() },
+      }
+    }
+
     const ranking = await engine.rankCandidate({
       candidateId: candidate.id,
       hiringRequestId: candidate.hiringRequestId,
@@ -759,6 +812,13 @@ export async function reanalyzeCandidateAction(
           field: e.field,
         })),
       },
+    })
+
+    await recordAiUsage({
+      organizationId: orgId,
+      feature: 'candidate_ranking',
+      tokensIn: ranking.usage.inputTokens,
+      tokensOut: ranking.usage.outputTokens,
     })
 
     await db.candidate.update({
