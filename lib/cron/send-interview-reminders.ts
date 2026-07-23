@@ -88,7 +88,7 @@ export async function sendInterviewReminders(now: Date = new Date()): Promise<Re
       }
 
       const icsUrl = `${appUrl}/api/public/interview.ics?id=${iv.id}&token=${tokenRow.token}`
-      const scheduledAtLocal = formatLocalTime(iv.scheduledAt, iv.organizationId)
+      const scheduledAtLocal = await formatLocalTime(iv.scheduledAt, iv.organizationId)
       const candidateName = `${iv.candidate.firstName} ${iv.candidate.lastName}`
       const interviewerName = iv.scheduledBy
         ? `${iv.scheduledBy.firstName} ${iv.scheduledBy.lastName}`
