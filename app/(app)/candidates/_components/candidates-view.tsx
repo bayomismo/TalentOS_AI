@@ -61,8 +61,15 @@ export function CandidatesView() {
   useEffect(() => {
     let cancelled = false
     import('../actions').then(async ({ getHiringRequestsForSelectAction }) => {
-      const hrs = await getHiringRequestsForSelectAction()
-      if (!cancelled) setHiringRequests(hrs)
+      const r = await getHiringRequestsForSelectAction()
+      if (cancelled) return
+      // The action returns { ok, requests: [...] } — unwrap it
+      const list = (r && Array.isArray((r as { requests?: unknown[] }).requests))
+        ? (r as { requests: { id: string; title: string }[] }).requests
+        : Array.isArray(r)
+          ? (r as { id: string; title: string }[])
+          : []
+      setHiringRequests(list)
     }).catch(() => null)
     return () => { cancelled = true }
   }, [])

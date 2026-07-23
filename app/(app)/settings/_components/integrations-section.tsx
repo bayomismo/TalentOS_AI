@@ -25,14 +25,14 @@ export async function getIntegrationsStatusAction(): Promise<{
   ok: true
   data: IntegrationsStatus
 } | { ok: false; error: string }> {
-  const auth = await requirePermission('org.manage_integrations')
+  const auth = await requirePermission('settings.manage')
   if (!auth.ok) return toActionFailure(auth)
   const status = await getGoogleStatus(auth.data.organizationId)
   return { ok: true, data: { google: status } }
 }
 
 export async function disconnectGoogleAction(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const auth = await requirePermission('org.manage_integrations')
+  const auth = await requirePermission('settings.manage')
   if (!auth.ok) return toActionFailure(auth)
   await disconnectGoogle(auth.data.organizationId)
   await recordAuditLog({

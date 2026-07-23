@@ -36,6 +36,7 @@ const PUBLIC_PATHS = [
   '/forgot-password',
   '/reset-password',
   '/onboarding',  // The layout itself enforces auth
+  '/jobs',        // Public job postings (Sprint 17)
 ]
 
 const PUBLIC_PREFIXES = [
