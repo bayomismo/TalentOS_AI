@@ -499,3 +499,61 @@ function serializeActivity(a: {
     occurredAt: a.occurredAt.toISOString(),
   }
 }
+
+// ---------------------------------------------------------------------------
+// getJobTemplateForPrefillAction
+// ---------------------------------------------------------------------------
+
+/**
+ * Sprint 15 P1 — Job Library → AI Recruiter handoff.
+ *
+ * Called by the AI Recruiter wizard when ?template=<id> is in the URL.
+ * Returns the template's prefill data (title, summary, description,
+ * required skills) so the wizard can pre-populate the prompt and
+ * skip the AI generation step if the user wants to use the template
+ * as-is.
+ *
+ * Tenant-scoped: only returns templates belonging to the caller's org.
+ */
+
+export interface JobTemplatePrefill {
+  id: string
+  title: string
+  level: string
+  summary: string
+  description: string
+  requiredSkills: string[]
+}
+
+export async function getJobTemplateForPrefillAction(
+  templateId: string,
+): Promise<{ ok: true; template: JobTemplatePrefill } | { ok: false; error: string }> {
+  const auth = await requireAuth()
+  if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
+  const orgId = auth.data.organizationId
+
+  const row = await db.jobDescription.findFirst({
+    where: { id: templateId, organizationId: orgId },
+    select: {
+      id: true,
+      title: true,
+      level: true,
+      summary: true,
+      description: true,
+      requiredSkills: true,
+    },
+  })
+  if (!row) return { ok: false, error: 'Template not found' }
+
+  return {
+    ok: true,
+    template: {
+      id: row.id,
+      title: row.title,
+      level: row.level,
+      summary: row.summary ?? '',
+      description: row.description,
+      requiredSkills: row.requiredSkills,
+    },
+  }
+}

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   BookmarkIcon,
   CopyIcon,
@@ -15,6 +16,8 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { cn } from '@/lib/utils'
 import { getJobLibraryAction, type JobLibraryData, type JobLibraryItem } from './actions'
+import { NewTemplateModal } from './_components/new-template-modal'
+import { ImportUrlModal } from './_components/import-url-modal'
 
 const CATEGORIES: { id: 'all' | string; label: string }[] = [
   { id: 'all', label: 'All categories' },
@@ -31,6 +34,17 @@ export default function JobLibraryPage() {
   const [data, setData] = useState<JobLibraryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [newTemplateOpen, setNewTemplateOpen] = useState(false)
+  const [importUrlOpen, setImportUrlOpen] = useState(false)
+
+  const refresh = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    getJobLibraryAction()
+      .then(result => setData(result))
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load job library'))
+      .finally(() => setLoading(false))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -53,6 +67,11 @@ export default function JobLibraryPage() {
       cancelled = true
     }
   }, [])
+
+  // Wrapper used by modals after a successful create/import.
+  const reload = useCallback(() => {
+    refresh()
+  }, [refresh])
 
   const items = data?.items ?? []
 
@@ -88,11 +107,11 @@ export default function JobLibraryPage() {
         }
         actions={
           <>
-            <Button variant="outline" disabled>
+            <Button variant="outline" onClick={() => setImportUrlOpen(true)}>
               <FileTextIcon className="h-4 w-4" />
               Import from URL
             </Button>
-            <Button disabled>
+            <Button onClick={() => setNewTemplateOpen(true)}>
               <PlusIcon className="h-4 w-4" />
               New template
             </Button>
@@ -163,15 +182,33 @@ export default function JobLibraryPage() {
           )}
         </CardContent>
       </Card>
+
+      <NewTemplateModal
+        open={newTemplateOpen}
+        onClose={() => setNewTemplateOpen(false)}
+        onCreated={reload}
+      />
+      <ImportUrlModal
+        open={importUrlOpen}
+        onClose={() => setImportUrlOpen(false)}
+        onImported={reload}
+      />
     </div>
   )
 }
 
 function JobTemplateCard({ template }: { template: JobLibraryItem }) {
+  const router = useRouter()
   const updated = new Date(template.updatedAt)
   const updatedLabel = isNaN(updated.getTime())
     ? ''
     : `Updated ${updated.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+
+  function useTemplate() {
+    // Send the user to AI Recruiter with the template id pre-selected.
+    // The AI Recruiter page reads ?template=<id> and pre-fills the form.
+    router.push(`/ai-recruiter?template=${encodeURIComponent(template.id)}`)
+  }
 
   return (
     <article
@@ -222,7 +259,7 @@ function JobTemplateCard({ template }: { template: JobLibraryItem }) {
           {updatedLabel}
           {template.isTemplate ? ' · Template' : ''}
         </span>
-        <Button variant="ghost" size="sm" disabled aria-label="Use template (coming soon)">
+        <Button variant="ghost" size="sm" onClick={useTemplate} aria-label={`Use ${template.title} as a starting point`}>
           <CopyIcon className="h-3.5 w-3.5" />
           Use template
         </Button>

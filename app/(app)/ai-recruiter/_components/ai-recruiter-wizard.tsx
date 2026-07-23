@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   AlertCircleIcon,
@@ -50,6 +51,7 @@ import {
   type CreateHiringRequestSuccess,
   type GenerateJobDescriptionSuccess,
   type SaveDraftSuccess,
+  getJobTemplateForPrefillAction,
 } from '../actions'
 import { useWizard, useDraft, usePhase, WizardProvider, type WizardState } from './wizard-state'
 import { ReviewScreen } from './review-screen'
@@ -96,9 +98,47 @@ function WizardInner() {
   const bus = useEventBus()
   const { workflowState, activeStepIndex, stepStatuses, steps, startWorkflow, resetWorkflow } = useAiWorkflow()
   const saveIntentRef = useRef<SaveIntent>(null)
+  const searchParams = useSearchParams()
+  const templatePrefillApplied = useRef<string | null>(null)
 
   const draft = useDraft()
   const phase = usePhase()
+
+  // Sprint 15 P1 — Job Library handoff.
+  // If the URL has ?template=<id>, prefill the prompt with the template
+  // (title + summary + key skills) so the user can adjust and generate,
+  // or edit and save-as directly. We only apply once per template id.
+  useEffect(() => {
+    const templateId = searchParams?.get('template')
+    if (!templateId) return
+    if (templatePrefillApplied.current === templateId) return
+    if (state.prompt) return
+    templatePrefillApplied.current = templateId
+    let cancelled = false
+    ;(async () => {
+      const r = await getJobTemplateForPrefillAction(templateId)
+      if (cancelled || !r.ok) return
+      const t = r.template
+      const prompt = [
+        `Use this job description as the starting point:`,
+        ``,
+        `Title: ${t.title}`,
+        `Level: ${t.level}`,
+        ``,
+        t.summary ? `Summary: ${t.summary}` : '',
+        ``,
+        `Required skills: ${t.requiredSkills.join(', ') || '(none listed)'}`,
+        ``,
+        `Original description:`,
+        t.description.slice(0, 1500),
+        ``,
+        `Refine and tailor this for our team, then generate a fresh draft.`,
+      ].filter(Boolean).join('\n')
+      dispatch({ type: 'set-prompt', prompt })
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   // Heuristic — turn the user's free-form prompt into wizard meta fields.
   const inferMeta = (prompt: string): {
