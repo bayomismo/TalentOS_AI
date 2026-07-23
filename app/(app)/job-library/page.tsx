@@ -6,6 +6,7 @@ import {
   BookmarkIcon,
   CopyIcon,
   FileTextIcon,
+  LinkIcon,
   PlusIcon,
   SearchIcon,
   SparklesIcon,
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { getJobLibraryAction, type JobLibraryData, type JobLibraryItem } from './actions'
 import { NewTemplateModal } from './_components/new-template-modal'
 import { ImportUrlModal } from './_components/import-url-modal'
+import { ShareModal } from './_components/share-modal'
 
 const CATEGORIES: { id: 'all' | string; label: string }[] = [
   { id: 'all', label: 'All categories' },
@@ -36,6 +38,7 @@ export default function JobLibraryPage() {
   const [error, setError] = useState<string | null>(null)
   const [newTemplateOpen, setNewTemplateOpen] = useState(false)
   const [importUrlOpen, setImportUrlOpen] = useState(false)
+  const [shareJob, setShareJob] = useState<JobLibraryItem | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -170,7 +173,7 @@ export default function JobLibraryPage() {
           ) : filtered.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {filtered.map(t => (
-                <JobTemplateCard key={t.id} template={t} />
+                <JobTemplateCard key={t.id} template={t} onShare={setShareJob} />
               ))}
             </div>
           ) : (
@@ -193,11 +196,21 @@ export default function JobLibraryPage() {
         onClose={() => setImportUrlOpen(false)}
         onImported={reload}
       />
+      {shareJob && (
+        <ShareModal
+          open={!!shareJob}
+          onClose={() => setShareJob(null)}
+          jobId={shareJob.id}
+          jobTitle={shareJob.title}
+          initiallyEnabled={shareJob.publicEnabled}
+          initialSlug={shareJob.publicSlug}
+        />
+      )}
     </div>
   )
 }
 
-function JobTemplateCard({ template }: { template: JobLibraryItem }) {
+function JobTemplateCard({ template, onShare }: { template: JobLibraryItem; onShare: (t: JobLibraryItem) => void }) {
   const router = useRouter()
   const updated = new Date(template.updatedAt)
   const updatedLabel = isNaN(updated.getTime())
@@ -258,11 +271,23 @@ function JobTemplateCard({ template }: { template: JobLibraryItem }) {
         <span className="text-xs text-slate-400 dark:text-slate-500">
           {updatedLabel}
           {template.isTemplate ? ' · Template' : ''}
+          {template.publicEnabled ? ' · Public' : ''}
         </span>
-        <Button variant="ghost" size="sm" onClick={useTemplate} aria-label={`Use ${template.title} as a starting point`}>
-          <CopyIcon className="h-3.5 w-3.5" />
-          Use template
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onShare?.(template)}
+            aria-label={`Share ${template.title} publicly`}
+          >
+            <LinkIcon className="h-3.5 w-3.5" />
+            {template.publicEnabled ? 'Link' : 'Share'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={useTemplate} aria-label={`Use ${template.title} as a starting point`}>
+            <CopyIcon className="h-3.5 w-3.5" />
+            Use
+          </Button>
+        </div>
       </div>
     </article>
   )

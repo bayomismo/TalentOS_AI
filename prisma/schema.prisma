@@ -377,6 +377,8 @@ model Organization {
   invitations        Invitation[]
   auditLogs          AuditLog[]
   copilotConfirmations CopilotActionConfirmation[]
+  googleIntegration    GoogleIntegration?
+  calendarEventMappings CalendarEventMapping[]
 
   @@index([slug])
 }
@@ -562,6 +564,11 @@ model JobDescription {
   requiredSkills   String[] @default([])
   niceToHave       String[] @default([])
   perks            String[] @default([])
+  /// Sprint 17 — public posting. If set, the job is viewable at
+  /// /jobs/[publicSlug] without auth. Null = private.
+  publicSlug       String?  @unique
+  publicEnabled    Boolean  @default(false)
+  publicPostedAt   DateTime?
   settings         Json     @default("{}")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -787,6 +794,7 @@ model Interview {
   questions     InterviewQuestion[]
   evaluations   InterviewEvaluation[]
   activities    Activity[]
+  calendarEventMapping CalendarEventMapping?
 
   @@index([organizationId])
   @@index([hiringRequestId, scheduledAt])
@@ -1315,4 +1323,56 @@ model CopilotActionConfirmation {
   @@index([organizationId, status])
   @@index([userId, createdAt(sort: Desc)])
   @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// GoogleIntegration — Sprint 17
+//
+// One row per organization. Stores the OAuth tokens + the per-user
+// mapping (user -> google email) for syncing interviews to Google
+// Calendar. Refresh tokens are encrypted at rest (AES-256-GCM in
+// lib/integrations/google/encrypt).
+// ---------------------------------------------------------------------------
+model GoogleIntegration {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId           String   @unique @db.Uuid
+  /// AES-256-GCM encrypted refresh token (ciphertext + iv + tag, base64).
+  /// Used to mint fresh access tokens without re-prompting the user.
+  refreshTokenEncrypted    String
+  /// Google account email of the connected user (for display).
+  googleEmail              String
+  /// Google account name of the connected user.
+  googleName               String?
+  /// Scope set we requested. Stored for re-validation.
+  scopes                   String[]
+  /// When the user granted/refreshed the connection.
+  connectedAt              DateTime @default(now())
+  /// When we last successfully used the token.
+  lastUsedAt               DateTime?
+  /// Set if the user revoked access; we stop trying to sync.
+  disconnectedAt           DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Sprint 17 — Maps a TalentOS interview to the Google Calendar event
+/// we created for it. Lets us update/delete the event when the
+/// interview changes.
+model CalendarEventMapping {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @db.Uuid
+  interviewId    String   @unique @db.Uuid
+  googleEventId  String
+  googleCalendarId String
+  /// Status of the last sync attempt.
+  lastSyncedAt   DateTime?
+  /// Set if the event was deleted on Google's side.
+  deletedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interview    Interview    @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }

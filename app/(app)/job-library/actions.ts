@@ -26,6 +26,8 @@ export interface JobLibraryItem {
   skills: string[]
   isTemplate: boolean
   updatedAt: string
+  publicEnabled: boolean
+  publicSlug: string | null
 }
 
 export interface JobLibraryData {
@@ -53,6 +55,8 @@ export async function getJobLibraryAction(): Promise<JobLibraryData> {
       description: true,
       requiredSkills: true,
       isTemplate: true,
+      publicEnabled: true,
+      publicSlug: true,
       updatedAt: true,
       hiringRequests: {
         take: 1,
@@ -71,6 +75,8 @@ export async function getJobLibraryAction(): Promise<JobLibraryData> {
     description: r.summary ?? r.description.slice(0, 220),
     skills: r.requiredSkills,
     isTemplate: r.isTemplate,
+    publicEnabled: r.publicEnabled,
+    publicSlug: r.publicSlug,
     updatedAt: r.updatedAt.toISOString(),
     }
   })
@@ -367,3 +373,81 @@ export async function importJobFromUrlAction(
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Public posting (Sprint 17)
+// ---------------------------------------------------------------------------
+
+/**
+ * Enable public posting of a job. Generates a random URL-safe slug.
+ * Once enabled, the job is reachable at /jobs/[slug] by anyone.
+ *
+ * Returns the public URL (relative — caller prepends the app origin).
+ */
+export async function enablePublicPostingAction(
+  jobId: string,
+): Promise<{ ok: true; slug: string; url: string } | { ok: false; error: string }> {
+  const auth = await requireAuth()
+  if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
+
+  // Verify ownership
+  const job = await db.jobDescription.findFirst({
+    where: { id: jobId, organizationId: auth.data.organizationId },
+    select: { id: true, publicSlug: true, publicEnabled: true },
+  })
+  if (!job) return { ok: false, error: 'Job not found' }
+
+  // Reuse existing slug if already enabled
+  if (job.publicSlug && job.publicEnabled) {
+    return { ok: true, slug: job.publicSlug, url: `/jobs/${job.publicSlug}` }
+  }
+
+  const { randomBytes } = await import('node:crypto')
+  const slug = randomBytes(12).toString('base64url')
+
+  await db.jobDescription.update({
+    where: { id: jobId },
+    data: { publicSlug: slug, publicEnabled: true, publicPostedAt: new Date() },
+  })
+
+  await recordAuditLog({
+    organizationId: auth.data.organizationId,
+    actorId: auth.data.userId,
+    action: 'JOB_PUBLIC_POSTING_ENABLED' as never,
+    targetType: 'jobDescription',
+    targetId: jobId,
+    outcome: 'success',
+    metadata: { slug } as any,
+  }).catch(() => null)
+
+  return { ok: true, slug, url: `/jobs/${slug}` }
+}
+
+export async function disablePublicPostingAction(
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const auth = await requireAuth()
+  if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
+
+  const job = await db.jobDescription.findFirst({
+    where: { id: jobId, organizationId: auth.data.organizationId },
+    select: { id: true },
+  })
+  if (!job) return { ok: false, error: 'Job not found' }
+
+  await db.jobDescription.update({
+    where: { id: jobId },
+    data: { publicEnabled: false },
+  })
+
+  await recordAuditLog({
+    organizationId: auth.data.organizationId,
+    actorId: auth.data.userId,
+    action: 'JOB_PUBLIC_POSTING_DISABLED' as never,
+    targetType: 'jobDescription',
+    targetId: jobId,
+    outcome: 'success',
+  }).catch(() => null)
+
+  return { ok: true }
+}
