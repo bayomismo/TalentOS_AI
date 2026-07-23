@@ -233,3 +233,54 @@ export function interviewReminderEmail(input: InterviewReminderEmailInput) {
 
   return { from: FROM_DEFAULT, subject, text, html: wrap(body) }
 }
+
+// ---------------------------------------------------------------------------
+// Sprint 17.6 — "New public application" notification
+// Sent to org admins when a candidate applies via the public job link.
+// ---------------------------------------------------------------------------
+
+export interface NewPublicApplicationInput {
+  /** Recipient (an org admin) */
+  to: string
+  recipientName: string
+  organizationName: string
+  jobTitle: string
+  candidateName: string
+  candidateEmail: string
+  /** Link into the candidate detail page. */
+  candidateWorkspaceUrl: string
+  /** Optional one-line summary from the cover letter. */
+  coverLetterExcerpt?: string | null
+}
+
+export function newPublicApplicationEmail(input: NewPublicApplicationInput) {
+  const subject = `New application for ${input.jobTitle} — ${input.candidateName}`
+
+  const text = [
+    `Hi ${input.recipientName},`,
+    '',
+    `${input.candidateName} just applied to ${input.jobTitle} via your public job link.`,
+    ``,
+    `  Name:     ${input.candidateName}`,
+    `  Email:    ${input.candidateEmail}`,
+    input.coverLetterExcerpt ? `  Message:  ${input.coverLetterExcerpt}` : '',
+    ``,
+    `Review the application in your workspace:`,
+    input.candidateWorkspaceUrl,
+  ].filter(Boolean).join('\n')
+
+  const body = [
+    `<p style="margin:0 0 12px 0;">Hi ${escapeHtml(input.recipientName)},</p>`,
+    `<p style="margin:0 0 16px 0;"><strong>${escapeHtml(input.candidateName)}</strong> just applied to <strong>${escapeHtml(input.jobTitle)}</strong> via your public job link.</p>`,
+    `<div style="background:#f1f5f9;border-left:3px solid ${BRAND_COLOR};padding:12px 16px;border-radius:6px;margin:16px 0;color:#334155;">`,
+    `  <div><strong>Name:</strong> ${escapeHtml(input.candidateName)}</div>`,
+    `  <div><strong>Email:</strong> ${escapeHtml(input.candidateEmail)}</div>`,
+    input.coverLetterExcerpt
+      ? `  <div style="margin-top:8px;"><strong>Message:</strong><br/>${escapeHtml(input.coverLetterExcerpt)}</div>`
+      : '',
+    `</div>`,
+    ctaButton(input.candidateWorkspaceUrl, 'Review application'),
+  ].join('\n')
+
+  return { from: FROM_DEFAULT, subject, text, html: wrap(body) }
+}

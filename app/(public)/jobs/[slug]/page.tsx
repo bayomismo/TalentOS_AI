@@ -241,18 +241,18 @@ export default async function PublicJobPage({ params }: { params: Promise<{ slug
           </section>
         )}
 
-        {/* Apply CTA — stub for now */}
+        {/* Apply CTA — public application, no auth required (Sprint 17.6) */}
         <section className="sticky bottom-0 -mx-6 mt-10 border-t border-slate-200 bg-white/90 px-6 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-800/90 sm:-mx-10 sm:rounded-xl sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-slate-900 dark:text-slate-50">Interested in this role?</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Apply via the TalentOS workspace or reach out directly.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Apply directly — no account required.</p>
             </div>
             <Link
-              href={`https://talentos-ai-lime.vercel.app/login?callbackUrl=/candidates/new?jobTitle=${encodeURIComponent(job.title)}`}
+              href={`/jobs/${slug}/apply`}
               className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-emerald-500 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
             >
-              Apply on TalentOS
+              Apply now →
             </Link>
           </div>
         </section>
