@@ -59,7 +59,7 @@ async function main() {
   const emailInput = page.locator('input[type="email"]')
   await emailInput.fill(testEmail)
   await page.click('button[type="submit"]')
-  await page.waitForTimeout(2000)
+  await page.waitForTimeout(4000)
   const checkEmailHeading = page.locator('text=Check your email')
   ok('success state shown after submit', await checkEmailHeading.isVisible())
 
