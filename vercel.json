@@ -8,5 +8,11 @@
     "app/api/**/*.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/interview-reminders",
+      "schedule": "0 * * * *"
+    }
+  ]
 }

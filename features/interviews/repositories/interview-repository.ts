@@ -48,6 +48,7 @@ export async function listInterviewsForCandidate(candidateId: string) {
         orderBy: { submittedAt: 'desc' },
         take: 1,
       },
+      reminderToken: { select: { token: true } },
     },
     orderBy: { scheduledAt: 'desc' },
   })
@@ -64,6 +65,9 @@ export async function listAllInterviewsForCenter() {
         orderBy: { submittedAt: 'desc' },
         take: 1,
       },
+      // Sprint 17 — pull the reminder token so the UI can offer a
+      // "Add to calendar" link for each interview.
+      reminderToken: { select: { token: true } },
     },
     orderBy: { scheduledAt: 'asc' },
   })

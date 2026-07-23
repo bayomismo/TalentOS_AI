@@ -157,3 +157,79 @@ export function offerLetterEmail(input: OfferLetterEmailInput) {
 
   return { from: FROM_DEFAULT, subject, text, html: wrap(body) }
 }
+
+/**
+ * Sprint 17 — 24h interview reminder.
+ *
+ * Goes to BOTH the candidate and the interviewer. The .ics download
+ * link is a tokenized URL the candidate can use without a TalentOS
+ * account.
+ */
+export interface InterviewReminderEmailInput {
+  organizationName: string
+  recipientName: string
+  recipientEmail: string
+  recipientIsCandidate: boolean
+  interviewTitle: string
+  candidateName: string
+  interviewerName: string
+  scheduledAtLocal: string      // human-readable local time, e.g. "Tue, Jul 24 at 2:00 PM CEST"
+  durationMinutes: number
+  location?: string
+  meetingUrl?: string
+  icsDownloadUrl: string        // tokenized URL for .ics download
+  hiringTitle: string            // the role being interviewed for
+  workspaceUrl: string           // link back into TalentOS
+}
+
+export function interviewReminderEmail(input: InterviewReminderEmailInput) {
+  const otherParty = input.recipientIsCandidate
+    ? `${input.interviewerName} (the interviewer)`
+    : `${input.candidateName} (the candidate)`
+  const subject = `Reminder: ${input.interviewTitle} tomorrow at ${input.scheduledAtLocal.split(' at ')[1] ?? input.scheduledAtLocal}`
+
+  const text = [
+    `Hi ${input.recipientName},`,
+    '',
+    `This is a reminder that you have an interview scheduled for tomorrow:`,
+    ``,
+    `  ${input.interviewTitle}`,
+    `  ${input.candidateName} × ${input.interviewerName}`,
+    `  ${input.scheduledAtLocal}`,
+    `  ${input.durationMinutes} minutes`,
+    input.location ? `  Location: ${input.location}` : '',
+    input.meetingUrl ? `  Meeting link: ${input.meetingUrl}` : '',
+    ``,
+    `Add to your calendar:`,
+    input.icsDownloadUrl,
+    ``,
+    `Hiring for: ${input.hiringTitle}`,
+    `Organization: ${input.organizationName}`,
+    ``,
+    input.recipientIsCandidate
+      ? `If you need to reschedule, reply to this email or contact your recruiter at ${input.workspaceUrl}`
+      : `View full details in your workspace: ${input.workspaceUrl}`,
+  ].filter(Boolean).join('\n')
+
+  const detailsList = [
+    `<li><strong>When:</strong> ${escapeHtml(input.scheduledAtLocal)} (${input.durationMinutes} min)</li>`,
+    input.location ? `<li><strong>Location:</strong> ${escapeHtml(input.location)}</li>` : '',
+    input.meetingUrl ? `<li><strong>Meeting link:</strong> <a href="${escapeHtml(input.meetingUrl)}">${escapeHtml(input.meetingUrl)}</a></li>` : '',
+    `<li><strong>With:</strong> ${escapeHtml(otherParty)}</li>`,
+  ].filter(Boolean).join('\n')
+
+  const body = [
+    `<p style="margin:0 0 16px 0;">Hi ${escapeHtml(input.recipientName)},</p>`,
+    `<p style="margin:0 0 12px 0;">This is a friendly reminder that you have an interview scheduled for <strong>tomorrow</strong>:</p>`,
+    `<p style="margin:0 0 4px 0;font-size:18px;font-weight:600;">${escapeHtml(input.interviewTitle)}</p>`,
+    `<p style="margin:0 0 16px 0;color:#64748b;">${escapeHtml(input.hiringTitle)} · ${escapeHtml(input.organizationName)}</p>`,
+    `<ul style="margin:0 0 16px 0;padding-left:20px;color:#334155;">${detailsList}</ul>`,
+    ctaButton(input.icsDownloadUrl, 'Add to your calendar'),
+    `<p style="font-size:12px;color:#64748b;margin-top:16px;">The calendar link works with Google Calendar, Apple Calendar, Outlook, and any other calendar app. Works without a TalentOS account.</p>`,
+    input.recipientIsCandidate
+      ? `<p style="font-size:12px;color:#64748b;margin-top:16px;">Need to reschedule? Reply to this email or contact your recruiter.</p>`
+      : `<p style="font-size:12px;color:#64748b;margin-top:16px;">View in your workspace: <a href="${escapeHtml(input.workspaceUrl)}" style="color:${BRAND_COLOR};">${escapeHtml(input.workspaceUrl)}</a></p>`,
+  ].join('\n')
+
+  return { from: FROM_DEFAULT, subject, text, html: wrap(body) }
+}

@@ -379,6 +379,7 @@ model Organization {
   copilotConfirmations CopilotActionConfirmation[]
   googleIntegration    GoogleIntegration?
   calendarEventMappings CalendarEventMapping[]
+  interviewReminderTokens InterviewReminderToken[]
 
   @@index([slug])
 }
@@ -777,6 +778,9 @@ model Interview {
   notes           String?          @db.Text
   cancelledReason String?
   completedAt     DateTime?
+  /// Sprint 17 — set when the 24h reminder email is sent. Used by
+  /// the cron job to ensure each interview gets exactly one reminder.
+  reminderSentAt   DateTime?
   /// Sprint 7: AI-generated interview kit snapshot (questions, scorecard
   /// criteria, overview). Stored on the Interview so the kit can be
   /// replayed even if individual InterviewQuestion rows are edited.
@@ -795,6 +799,7 @@ model Interview {
   evaluations   InterviewEvaluation[]
   activities    Activity[]
   calendarEventMapping CalendarEventMapping?
+  reminderToken InterviewReminderToken?
 
   @@index([organizationId])
   @@index([hiringRequestId, scheduledAt])
@@ -1370,6 +1375,26 @@ model CalendarEventMapping {
   deletedAt      DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interview    Interview    @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// InterviewReminderToken — Sprint 17
+//
+// Per-interview token that lets the candidate (no TalentOS account
+// needed) download the .ics file for the interview. Created when the
+// 24h reminder email is sent; never expires.
+// ---------------------------------------------------------------------------
+model InterviewReminderToken {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String @db.Uuid
+  interviewId  String   @unique @db.Uuid
+  token        String   @unique
+  createdAt    DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   interview    Interview    @relation(fields: [interviewId], references: [id], onDelete: Cascade)

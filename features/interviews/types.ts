@@ -119,6 +119,10 @@ export interface CandidateInterviewListItem {
   hasEvaluation: boolean
   interviewScore: number | null
   evaluationRecommendation: EvaluationRecommendation | null
+  /** Sprint 17 — public token for the .ics download link. Set when
+   *  the 24h reminder is sent; null for interviews that haven't
+   *  received their reminder yet (the server auto-creates one). */
+  reminderToken: string | null
 }
 
 export interface InterviewCenterData {

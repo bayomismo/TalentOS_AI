@@ -242,6 +242,20 @@ function InterviewRow({ item, tab }: { item: CandidateInterviewListItem; tab: Ta
           <FileTextIcon className="mr-1.5 h-3.5 w-3.5" />
           {item.hasEvaluation ? 'View' : tab === 'completed' ? 'View' : 'Open kit'}
         </Button>
+        {/* Sprint 17 — "Add to calendar" download link. The URL works
+            for both logged-in TalentOS users and the candidate (who
+            has no account); the random token proves the link is genuine. */}
+        {item.reminderToken && (
+          <a
+            href={`/api/public/interview.ics?id=${item.id}&token=${item.reminderToken}`}
+            download
+            aria-label="Download .ics file for your calendar"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <CalendarIcon className="h-3.5 w-3.5" />
+            .ics
+          </a>
+        )}
       </div>
     </li>
   )

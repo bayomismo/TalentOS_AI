@@ -112,6 +112,7 @@ export async function getCandidateInterviewsAction(
         hasEvaluation: !!evalRow,
         interviewScore: evalRow?.interviewScore ?? null,
         evaluationRecommendation: evalRow?.recommendation ?? null,
+        reminderToken: r.reminderToken?.token ?? null,
       }
     })
     return { ok: true, data: { items } }
@@ -161,6 +162,9 @@ export async function getInterviewCenterAction(): Promise<ActionResult<Interview
         hasEvaluation: !!e,
         interviewScore: e?.interviewScore ?? null,
         evaluationRecommendation: e?.recommendation ?? null,
+        // Sprint 17: existing token or null (cron will create one when it
+        // sends the reminder). Read it from the relation.
+        reminderToken: r.reminderToken?.token ?? null,
       }
     }
 

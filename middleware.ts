@@ -49,6 +49,7 @@ const PUBLIC_PREFIXES = [
   '/api/auth',
   '/api/health',
   '/api/public',
+  '/jobs',        // Public job postings
 ]
 
 function isPublicPath(pathname: string): boolean {
