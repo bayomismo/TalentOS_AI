@@ -39,6 +39,7 @@ const PUBLIC_PATHS = [
   '/jobs',        // Public job postings (Sprint 17)
   '/robots.txt',  // SEO (Sprint 17.5)
   '/sitemap.xml', // SEO (Sprint 17.5)
+  '/api/cron',    // Vercel Cron (auth via bearer token in route)
 ]
 
 const PUBLIC_PREFIXES = [
