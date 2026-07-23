@@ -37,6 +37,8 @@ const PUBLIC_PATHS = [
   '/reset-password',
   '/onboarding',  // The layout itself enforces auth
   '/jobs',        // Public job postings (Sprint 17)
+  '/robots.txt',  // SEO (Sprint 17.5)
+  '/sitemap.xml', // SEO (Sprint 17.5)
 ]
 
 const PUBLIC_PREFIXES = [
