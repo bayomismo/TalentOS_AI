@@ -40,8 +40,11 @@ import { rateLimit } from '@/lib/auth/rate-limit'
 
 const requestSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
-  requestIp: z.string().optional(),
-  requestUserAgent: z.string().optional(),
+  // null is allowed (the form sends null when unavailable); undefined
+  // is allowed too. We coerce to undefined so the rest of the code
+  // can treat it as "not provided".
+  requestIp: z.union([z.string(), z.null()]).optional().transform(v => v ?? undefined),
+  requestUserAgent: z.union([z.string(), z.null()]).optional().transform(v => v ?? undefined),
 })
 
 export type RequestPasswordResetResult =
