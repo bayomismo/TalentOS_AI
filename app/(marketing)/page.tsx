@@ -1,12 +1,12 @@
 /**
  * Sprint 17.5 — Root marketing page.
  *
- * Public landing. Logged-in users are sent to /dashboard so the
- * link works for both audiences without a confusing flash.
+ * Public landing. Logged-in users get a small client-side nudge to
+ * /dashboard; the page itself is server-rendered and fully static
+ * (no per-request auth() call), which keeps the build simple and
+ * the marketing page fast.
  */
 import type { Metadata } from 'next'
-import { redirect } from 'next/navigation'
-import { auth } from '@/lib/auth'
 import { MarketingHeader } from './_components/marketing-header'
 import { MarketingHero } from './_components/marketing-hero'
 import { MarketingFeatures } from './_components/marketing-features'
@@ -14,6 +14,7 @@ import { MarketingHow } from './_components/marketing-how'
 import { MarketingWhy } from './_components/marketing-why'
 import { MarketingFinalCta } from './_components/marketing-final-cta'
 import { MarketingFooter } from './_components/marketing-footer'
+import { LoggedInRedirect } from './_components/logged-in-redirect'
 
 const APP_URL = process.env.APP_URL ?? 'https://talentos-ai-lime.vercel.app'
 
@@ -54,16 +55,10 @@ export const metadata: Metadata = {
   },
 }
 
-export default async function MarketingHome() {
-  // If already signed in, take them straight to the dashboard.
-  // Same URL works for two audiences: marketing redirect → /, logged-in → /dashboard.
-  const session = await auth()
-  if (session?.user) {
-    redirect('/dashboard')
-  }
-
+export default function MarketingHome() {
   return (
     <>
+      <LoggedInRedirect />
       <MarketingHeader />
       <main>
         <MarketingHero />
