@@ -30,11 +30,13 @@ export default function ForgotPasswordPage() {
       return
     }
     startTransition(async () => {
-      const r = await requestPasswordResetAction({
-        email,
-        requestIp: null,
-        requestUserAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-      })
+      // Build payload without requestIp/requestUserAgent — the
+      // server action's zod schema treats them as optional and
+      // rejects explicit `null` (z.string().optional() = string |
+      // undefined, not string | null). Server logs request metadata
+      // from headers() in the action itself, so we don't need to
+      // send it from the client.
+      const r = await requestPasswordResetAction({ email })
       if (!r.ok) {
         setError(r.error.message)
         return
