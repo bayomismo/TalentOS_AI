@@ -10,7 +10,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth/auth'
-import { buildGoogleConnectUrl, isGoogleConfigured } from '@/lib/integrations/google/oauth'
+import { isGoogleConfigured } from '@/lib/integrations/google/oauth'
+import { buildGoogleConnectUrl } from '@/lib/integrations/google/service'
 
 export async function GET(req: NextRequest) {
   if (!isGoogleConfigured()) {

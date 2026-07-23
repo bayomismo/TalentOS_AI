@@ -1092,6 +1092,14 @@ export async function bulkMoveCandidatesAction(
     }
 
     const now = new Date()
+    // Look up the actor's name once (we used to await inside the flatMap, which is invalid)
+    const actor = await db.user.findUnique({
+      where: { id: actorId },
+      select: { firstName: true },
+    })
+    const actorName = actor?.firstName ?? 'admin'
+    const defaultDescription = `Bulk moved by ${actorName}`
+
     await db.$transaction([
       db.candidate.updateMany({
         where: { id: { in: toUpdate.map(c => c.id) } },
@@ -1104,7 +1112,7 @@ export async function bulkMoveCandidatesAction(
             organizationId: orgId,
             type: 'CANDIDATE_MOVED' as never,
             title: `Moved to ${input.toStage}`,
-            description: input.reason ?? `Bulk moved by ${(await db.user.findUnique({ where: { id: actorId } }))?.firstName ?? 'admin'}`,
+            description: input.reason ?? defaultDescription,
             actorId,
             candidateId: c.id,
             hiringRequestId: c.hiringRequestId,

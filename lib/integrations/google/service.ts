@@ -20,6 +20,7 @@ import {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
+  getOAuthState,
   type CalendarEventInput,
 } from './oauth'
 
@@ -49,7 +50,6 @@ export async function getGoogleStatus(organizationId: string): Promise<GoogleSta
 }
 
 export function buildGoogleConnectUrl(organizationId: string, appUrl: string): string {
-  const { getOAuthState } = require('./oauth') as typeof import('./oauth')
   const state = getOAuthState(organizationId)
   return buildAuthUrl(`${appUrl}/api/google/callback`, state)
 }

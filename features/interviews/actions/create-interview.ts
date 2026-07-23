@@ -100,6 +100,22 @@ export async function createInterviewAction(
     })
     safeRevalidate(`/candidates/${candidate.id}`)
     safeRevalidate(`/interview-center`)
+
+    // Sprint 17 — Google Calendar sync (best-effort, non-blocking).
+    if (interview.meetingUrl || input.location) {
+      const { syncInterviewCreate } = await import('@/lib/integrations/google/service')
+      const endIso = new Date(interview.scheduledAt.getTime() + interview.durationMinutes * 60_000).toISOString()
+      syncInterviewCreate({
+        organizationId: auth.data.organizationId,
+        interviewId: interview.id,
+        summary: `${interview.title} · ${candidate.firstName} ${candidate.lastName}`,
+        description: interview.notes ?? undefined,
+        startIso: interview.scheduledAt.toISOString(),
+        endIso,
+        location: input.location,
+        meetingUrl: interview.meetingUrl ?? undefined,
+      }).catch(err => console.error('[google-calendar] sync failed:', err))
+    }
     return { ok: true, data: { interviewId: interview.id } }
   } catch (err) {
     return {
