@@ -53,6 +53,7 @@ export async function requestPasswordResetAction(
 ): Promise<RequestPasswordResetResult> {
   const parsed = requestSchema.safeParse(input)
   if (!parsed.success) {
+    console.error('[password-reset] parse failed:', JSON.stringify(parsed.error.issues))
     return {
       ok: false,
       error: {
