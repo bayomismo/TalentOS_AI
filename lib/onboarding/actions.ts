@@ -203,6 +203,43 @@ export async function inviteTeamMemberAction(input: unknown): Promise<{
     outcome: 'success',
     metadata: { email: parsed.data.email, role: parsed.data.role } as any,
   }).catch(() => null)
+
+  // Sprint 16 — also queue an invitation email via the email
+  // provider. The URL is still returned to the inviter (they can
+  // copy and paste it), but the recipient will ALSO get an email.
+  const { sendEmail } = await import('@/lib/email')
+  const { teamInvitationEmail } = await import('@/lib/email/templates')
+  const org = await db.organization.findUnique({
+    where: { id: auth.data.organizationId },
+    select: { name: true },
+  })
+  const inviter = await db.user.findUnique({
+    where: { id: auth.data.userId },
+    select: { firstName: true, lastName: true, email: true },
+  })
+  if (org && inviter) {
+    const tpl = teamInvitationEmail({
+      to: parsed.data.email,
+      inviterName: `${inviter.firstName} ${inviter.lastName}`,
+      inviterEmail: inviter.email,
+      organizationName: org.name,
+      role: parsed.data.role,
+      token,
+      message: null,
+    })
+    await sendEmail({
+      kind: 'team_invitation',
+      to: parsed.data.email,
+      from: tpl.from,
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
+      metadata: { invitationId: inv.id },
+    }).catch(err => {
+      console.error('[onboarding] failed to queue invitation email:', err)
+    })
+  }
+
   return { ok: true, invitationUrl: buildAcceptInviteUrl(token) }
 }
 

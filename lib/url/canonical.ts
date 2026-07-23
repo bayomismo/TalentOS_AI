@@ -75,4 +75,14 @@ export function buildAcceptInviteUrl(token: string): string {
   return `${base}/accept-invite#token=${encodeURIComponent(token)}`
 }
 
+/**
+ * Sprint 16 — Password reset link. Uses a hash-fragment token (same
+ * pattern as the invitation flow) so the plaintext token never
+ * crosses the server boundary in the path or query string.
+ */
+export function buildResetPasswordUrl(token: string): string {
+  const base = getAppUrl()
+  return `${base}/reset-password#token=${encodeURIComponent(token)}`
+}
+
 export const CANONICAL_PRODUCTION_URL = `https://${CANONICAL_PROD_HOST}`

@@ -447,6 +447,7 @@ model User {
   copilotConfirmations    CopilotActionConfirmation[]
   offersApproved          Offer[]                @relation("OfferApprover")
   offersIssued            Offer[]                @relation("OfferIssuer")
+  passwordResetTokens     PasswordResetToken[]
 
   @@index([organizationId])
   @@index([organizationId, role])
@@ -1108,6 +1109,57 @@ model Invitation {
 
   @@index([organizationId, status])
   @@index([email])
+  @@index([expiresAt])
+}
+
+/// Sprint 16 — Outbox for outgoing email. Every email the app sends
+/// (invitations, password resets, offer letters, interview reminders)
+/// is written here first. The default `LocalOutboxProvider` always
+/// succeeds; a future cron job (Sprint 18) sweeps `PENDING` rows and
+/// hands them to a real delivery provider (Resend, SES, Postmark).
+model EmailOutbox {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Logical message type: 'team_invitation', 'password_reset',
+  /// 'offer_letter', 'interview_reminder'. Used for analytics and
+  /// delivery-job grouping.
+  kind        String
+  to          String
+  fromAddr    String?
+  subject     String
+  text        String    @db.Text
+  html        String?   @db.Text
+  /// Free-form metadata (e.g. invitation id, reset-request id). Never
+  /// log this column with PII; treat as audit-grade.
+  metadata    Json?
+  /// PENDING → SENT (real provider) | FAILED | SKIPPED (dev only).
+  status      String    @default("PENDING")
+  sentAt      DateTime?
+  failure     String?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([kind, createdAt])
+  @@index([to])
+}
+
+/// Sprint 16 — Password reset tokens. Same pattern as the invitation
+/// tokens: random 32-byte secret, persisted as SHA-256 hash + 8-char
+/// plaintext prefix for the UI. TTL 1 hour, single use.
+model PasswordResetToken {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @db.Uuid
+  tokenHash      String   @unique
+  tokenPrefix    String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  /// IP of the requester, for the user's own audit trail.
+  requestIp      String?
+  requestUserAgent String?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
   @@index([expiresAt])
 }
 

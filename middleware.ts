@@ -33,6 +33,8 @@ const PUBLIC_PATHS = [
   '/signup',
   '/unauthorized',
   '/accept-invite',
+  '/forgot-password',
+  '/reset-password',
   '/onboarding',  // The layout itself enforces auth
 ]
 
