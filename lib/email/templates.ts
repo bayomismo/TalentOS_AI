@@ -186,12 +186,12 @@ export function interviewReminderEmail(input: InterviewReminderEmailInput) {
   const otherParty = input.recipientIsCandidate
     ? `${input.interviewerName} (the interviewer)`
     : `${input.candidateName} (the candidate)`
-  const subject = `Reminder: ${input.interviewTitle} tomorrow at ${input.scheduledAtLocal.split(' at ')[1] ?? input.scheduledAtLocal}`
+  const subject = `Reminder: ${input.interviewTitle} on ${input.scheduledAtLocal}`
 
   const text = [
     `Hi ${input.recipientName},`,
     '',
-    `This is a reminder that you have an interview scheduled for tomorrow:`,
+    `This is a reminder that you have an interview coming up:`,
     ``,
     `  ${input.interviewTitle}`,
     `  ${input.candidateName} × ${input.interviewerName}`,
@@ -220,7 +220,7 @@ export function interviewReminderEmail(input: InterviewReminderEmailInput) {
 
   const body = [
     `<p style="margin:0 0 16px 0;">Hi ${escapeHtml(input.recipientName)},</p>`,
-    `<p style="margin:0 0 12px 0;">This is a friendly reminder that you have an interview scheduled for <strong>tomorrow</strong>:</p>`,
+    `<p style="margin:0 0 12px 0;">This is a friendly reminder that you have an interview coming up:</p>`,
     `<p style="margin:0 0 4px 0;font-size:18px;font-weight:600;">${escapeHtml(input.interviewTitle)}</p>`,
     `<p style="margin:0 0 16px 0;color:#64748b;">${escapeHtml(input.hiringTitle)} · ${escapeHtml(input.organizationName)}</p>`,
     `<ul style="margin:0 0 16px 0;padding-left:20px;color:#334155;">${detailsList}</ul>`,

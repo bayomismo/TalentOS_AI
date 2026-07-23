@@ -2,25 +2,30 @@
  * Sprint 17 — Send 24h interview reminders.
  *
  * Called by the /api/cron/interview-reminders route. Designed to run
- * hourly via Vercel Cron (see vercel.json).
+ * ONCE PER DAY at 9am UTC via Vercel Cron (see vercel.json).
+ *
+ * Hobby plan limit: Vercel Hobby only allows daily cron jobs. The
+ * cron is `0 9 * * *`. The window is therefore widened to catch all
+ * interviews in the next ~30 hours that haven't been reminded.
  *
  * What it does:
  *  1. Find every interview where:
  *     - status = SCHEDULED
- *     - scheduledAt is in [now+23h, now+25h] (1-hour window, hourly cadence)
+ *     - scheduledAt is in [now+20h, now+50h] (~30h window, daily cadence)
  *     - reminderSentAt IS NULL
  *  2. For each, create a token (idempotent per interview), build
  *     the .ics URL, send a reminder email to BOTH the candidate and
  *     the interviewer, and mark reminderSentAt.
  *
  * Idempotency: thanks to `reminderSentAt IS NULL`, the same interview
- * can never be processed twice. If the cron job is delayed, the
- * window (now+23h to now+25h) ensures we still catch it.
+ * can never be processed twice. If the cron is delayed by hours, the
+ * 30-hour window ensures we still catch it. The next day's run finds
+ * nothing to do (because reminderSentAt is set).
  *
- * The 1-hour window is intentional: at hourly cadence, a 2-hour
- * window ensures we never miss, while a 1-hour window prevents us
- * from sending twice in the same hour if a deployment restarts
- * the cron job.
+ * Trade-off vs. per-hour cron: reminder timing is "day before" rather
+ * than "24h before" — so a 5pm Tuesday interview gets reminded on
+ * Monday morning, not 5pm Monday. Upgrade to Vercel Pro ($20/mo) for
+ * per-hour cadence and exact 24h-before reminders.
  */
 
 import { db } from '@/lib/db'
@@ -35,8 +40,8 @@ export interface RemindersRunResult {
 }
 
 export async function sendInterviewReminders(now: Date = new Date()): Promise<RemindersRunResult> {
-  const windowStart = new Date(now.getTime() + 23 * 60 * 60 * 1000)
-  const windowEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000)
+  const windowStart = new Date(now.getTime() + 20 * 60 * 60 * 1000)
+  const windowEnd = new Date(now.getTime() + 50 * 60 * 60 * 1000)
 
   // Find candidates
   const candidates = await db.interview.findMany({

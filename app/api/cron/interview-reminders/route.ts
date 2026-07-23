@@ -11,7 +11,10 @@
  * function only sends to interviews where reminderSentAt IS NULL.
  *
  * Vercel config (vercel.json):
- *   { "crons": [{ "path": "/api/cron/interview-reminders", "schedule": "0 * * * *" }] }
+ *   { "crons": [{ "path": "/api/cron/interview-reminders", "schedule": "0 9 * * *" }] }
+ *
+ * Hobby plan runs the cron once per day at 9am UTC. To get per-hour
+ * cadence (exact 24h-before reminders), upgrade to Vercel Pro.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
