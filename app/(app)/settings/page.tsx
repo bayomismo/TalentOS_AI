@@ -24,6 +24,7 @@ import { DataManagementPage } from '@/features/data-management/components/data-m
 import { ProfileSection } from './_components/profile-section'
 import { OrganizationSection } from './_components/organization-section'
 import { AiUsageSection } from './_components/ai-usage-section'
+import { IntegrationsSection } from './_components/integrations-section.client'
 import { ComingSoonSection } from './_components/coming-soon-section'
 import { cn } from '@/lib/utils'
 
@@ -35,7 +36,7 @@ const settingsSections = [
   { id: 'ai-usage', label: 'AI Usage', icon: SparklesIcon },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, notImplemented: true, notImplementedLabel: 'Notification preferences will be configurable in a future release. We currently send all transactional alerts (interview reminders, offer activity) regardless of this setting.' },
   { id: 'security', label: 'Security', icon: ShieldIcon },
-  { id: 'integrations', label: 'Integrations', icon: KeyIcon, notImplemented: true, notImplementedLabel: 'Native integrations (Google Calendar, Slack, Greenhouse) are planned for a future release. Today TalentOS works as a standalone workspace.' },
+  { id: 'integrations', label: 'Integrations', icon: KeyIcon, adminOnly: true },
 ] as const
 
 type SettingsSectionId = (typeof settingsSections)[number]['id']
@@ -122,6 +123,14 @@ export default function SettingsPage() {
             </Card>
           )}
           {active === 'ai-usage' && <AiUsageSection />}
+          {active === 'integrations' && isAdmin && <IntegrationsSection />}
+          {active === 'integrations' && !isAdmin && (
+            <Card>
+              <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+                Only administrators can manage integrations.
+              </CardContent>
+            </Card>
+          )}
           {active === 'security' && <SecuritySection />}
           {('notImplemented' in activeSection && activeSection.notImplemented) && (
             <ComingSoonSection
