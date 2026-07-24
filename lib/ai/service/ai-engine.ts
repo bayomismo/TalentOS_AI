@@ -231,18 +231,28 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
-    const maxAttempts = 2
+    // 4 attempts with specific Zod issues in the corrective prompt
+    // (same pattern as callInterviewKit / callDecisionBrief).
+    const maxAttempts = 4
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const promptToUse =
-        attempt === 1
-          ? fullPrompt
-          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+      let promptToUse: string
+      let temperature: number
+      if (attempt === 1) {
+        promptToUse = fullPrompt
+        temperature = 0.3
+      } else {
+        const issues = lastError.value instanceof Error
+          ? lastError.value.message.slice(0, 800)
+          : 'unknown validation error'
+        promptToUse = `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Specific issues:\n\n${issues}\n\nRe-emit a complete JSON object that fixes those issues. Do not include any commentary outside the JSON.`
+        temperature = Math.max(0.1, 0.3 - (attempt - 1) * 0.1)
+      }
 
       try {
         const result = await this.provider.generate(promptToUse, {
           responseMimeType: 'application/json',
-          temperature: 0.3,
+          temperature,
         })
         let rawText = (result.data as string).trim()
         rawText = rawText
@@ -337,13 +347,33 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
-    const maxAttempts = 2
+    // Up to 4 attempts: 1 initial + 3 corrective retries. Gemini's flash
+    // model is non-deterministic and occasionally produces JSON that
+    // doesn't match the strict Zod schema (missing fields, wrong enums,
+    // or out-of-range integers). The corrective prompt after attempt 1
+    // explicitly tells the model what went wrong, which usually fixes it
+    // by attempt 3. Without this, a user clicking "Generate kit" hits
+    // a generic INTERNAL error ~5% of the time.
+    const maxAttempts = 4
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const promptToUse =
-        attempt === 1
-          ? fullPrompt
-          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+      let promptToUse: string
+      let temperature: number
+      if (attempt === 1) {
+        promptToUse = fullPrompt
+        temperature = 0.4
+      } else {
+        // On retry, lower the temperature for more deterministic output
+        // AND include the specific Zod issues so the model knows what
+        // to fix. Previous versions just said "did not validate" which
+        // the model interpreted as a generic failure and produced
+        // equally-bad output.
+        const issues = lastError.value instanceof Error
+          ? lastError.value.message.slice(0, 800)
+          : 'unknown validation error'
+        promptToUse = `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Specific issues:\n\n${issues}\n\nRe-emit a complete JSON object that fixes those issues. Do not include any commentary outside the JSON.`
+        temperature = Math.max(0.1, 0.4 - (attempt - 1) * 0.1)
+      }
 
       try {
         // We use `generate` (not `generateStructured`) for the interview
@@ -353,7 +383,7 @@ export class AIEngine {
         // injects a corrective system message.
         const result = await this.provider.generate(promptToUse, {
           responseMimeType: 'application/json',
-          temperature: 0.4,
+          temperature,
         })
         let rawText = (result.data as string).trim()
         // Strip a single leading/trailing markdown fence if the model
@@ -391,18 +421,30 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
-    const maxAttempts = 2
+    // Same retry strategy as callInterviewKit: 4 attempts with the
+    // specific Zod issues injected into the corrective prompt. The
+    // decision-brief schema has nested arrays (evidence items) and
+    // nested enums which Gemini sometimes gets wrong on first try.
+    const maxAttempts = 4
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const promptToUse =
-        attempt === 1
-          ? fullPrompt
-          : `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Re-emit a complete JSON object that matches the contract above. Do not include any commentary.`
+      let promptToUse: string
+      let temperature: number
+      if (attempt === 1) {
+        promptToUse = fullPrompt
+        temperature = 0.3
+      } else {
+        const issues = lastError.value instanceof Error
+          ? lastError.value.message.slice(0, 800)
+          : 'unknown validation error'
+        promptToUse = `${fullPrompt}\n\n# CORRECTION (attempt ${attempt})\nYour previous response did not validate against the Zod schema. Specific issues:\n\n${issues}\n\nRe-emit a complete JSON object that fixes those issues. Do not include any commentary outside the JSON.`
+        temperature = Math.max(0.1, 0.3 - (attempt - 1) * 0.1)
+      }
 
       try {
         const result = await this.provider.generate(promptToUse, {
           responseMimeType: 'application/json',
-          temperature: 0.3,
+          temperature,
         })
         let rawText = (result.data as string).trim()
         rawText = rawText

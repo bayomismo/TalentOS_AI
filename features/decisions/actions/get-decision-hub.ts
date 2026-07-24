@@ -187,7 +187,7 @@ export async function generateDecisionBriefAction(
       candidateIds: input.candidateIds,
       actorId: auth.data.userId,
     })
-    if (!result.ok) return { ok: false, error: { code: 'INTERNAL', message: result.error.message, retryable: result.error.retryable ?? true } }
+    if (!result.ok) return { ok: false, error: { code: 'INTERNAL', message: result.error.message, retryable: result.error.retryable ?? true, details: result.error.details } }
     return { ok: true, data: result.data }
   } catch (err) {
     return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to generate Decision Brief', retryable: true } }
@@ -226,6 +226,39 @@ export async function recordDecisionAction(
       reason: input.reason,
       decidedById: auth.data.userId,
     })
+
+    // Sprint 18 — keep candidate.stage in sync with the decision so the
+    // pipeline view reflects the human's choice. Without this, the activity
+    // log says "Ada → selected" but the kanban / list still shows her in
+    // INTERVIEW. State machine enforces the transition is legal.
+    //
+    //   SELECTED → OFFER (caller is committing to drafting an offer)
+    //   REJECT   → REJECTED (terminal)
+    //   HOLD     → no stage change (HOLD is a marker, not a stage)
+    //   ADVANCE  → no stage change (e.g. moving to next round, but stage
+    //              transitions are already done by bulkMoveCandidatesAction)
+    let stageUpdated = false
+    if (input.decision === 'SELECTED' || input.decision === 'REJECT') {
+      const { validateStageTransition } = await import('@/lib/candidates/state-machine')
+      const targetStage = input.decision === 'SELECTED' ? 'OFFER' : 'REJECTED'
+      const fullCandidate = await db.candidate.findUnique({
+        where: { id: candidate.id },
+        select: { stage: true },
+      })
+      if (fullCandidate) {
+        const transition = validateStageTransition(fullCandidate.stage, targetStage as any)
+        if (transition.ok) {
+          await db.candidate.update({
+            where: { id: candidate.id },
+            data: {
+              stage: targetStage as any,
+              ...(input.decision === 'REJECT' && { rejectedAt: new Date(), rejectedReason: input.reason ?? null }),
+            },
+          })
+          stageUpdated = true
+        }
+      }
+    }
 
     const bus = getEventBus()
     const eventType =
@@ -277,7 +310,7 @@ export async function recordDecisionAction(
       metadata: { candidateId: candidate.id, decision: input.decision },
     })
 
-    return { ok: true, data: { decisionId: decision.id, decision: input.decision } }
+    return { ok: true, data: { decisionId: decision.id, decision: input.decision, stageUpdated } }
   } catch (err) {
     return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Failed to record decision', retryable: true } }
   }
