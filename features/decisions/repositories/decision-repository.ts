@@ -130,9 +130,24 @@ export async function findHiringRequestForDecisionHub(hiringRequestId: string, o
 }
 
 export async function listDecisionHubCandidates(hiringRequestId: string) {
+  // Sprint 18 — show ALL candidates for the HR, not just AI-analyzed ones.
+  //
+  // The previous filter (`matchScore: { not: null }`) hid any candidate that
+  // was added without an AI ranking — manual entry, public application
+  // (Sprint 17.6), etc. — even though the metrics at the top of the
+  // Decision Hub correctly count them. That left a confusing page where
+  // "TOTAL: 2" was followed by "0 ready for review" and the empty state
+  // "No analyzed candidates yet" even when there were clearly 2 candidates
+  // to act on.
+  //
+  // We now show every candidate, sorted so the most-promising move to the
+  // top (analyzed + matched first, by score; everything else after). The
+  // "ready for review" badge in the UI marks candidates with a completed
+  // interview + evaluation, so the user can see at a glance which ones
+  // are actionable.
   return db.candidate.findMany({
-    where: { hiringRequestId, matchScore: { not: null } },
-    orderBy: [{ matchScore: 'desc' }, { lastName: 'asc' }],
+    where: { hiringRequestId },
+    orderBy: [{ matchScore: { sort: 'desc', nulls: 'last' } }, { lastName: 'asc' }],
     include: CANDIDATE_INCLUDE,
   })
 }

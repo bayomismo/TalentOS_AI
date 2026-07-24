@@ -326,7 +326,9 @@ export function DecisionHubView({ hiringRequestId }: Props) {
         <CardContent className="space-y-3">
           {candidates.length === 0 && (
             <p className="py-8 text-center text-sm text-slate-500">
-              No analyzed candidates yet. Upload CVs in the workspace first.
+              No candidates on this hiring request yet. Add candidates via the
+              workspace (CV upload, manual entry, or public application) and
+              they will appear here.
             </p>
           )}
           {candidates.map(c => (
