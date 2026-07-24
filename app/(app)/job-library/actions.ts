@@ -12,7 +12,7 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requirePermission } from '@/lib/auth'
 import { z } from 'zod'
 import { recordAuditLog } from '@/lib/auth/audit'
 import { rateLimit } from '@/lib/auth/rate-limit'
@@ -108,7 +108,9 @@ export type CreateJobTemplateResult =
 export async function createJobTemplateAction(
   input: unknown,
 ): Promise<CreateJobTemplateResult> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth(); now requirePermission so
+  // VIEWER/INTERVIEWER cannot create job templates.
+  const auth = await requirePermission('hiring_request.create')
   if (!auth.ok) {
     return { ok: false, error: { code: 'UNAUTHENTICATED', message: 'Please sign in.' } }
   }
@@ -245,7 +247,9 @@ function extractHost(url: string): string {
 export async function importJobFromUrlAction(
   input: unknown,
 ): Promise<ImportJobFromUrlResult> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth(); now requirePermission so
+  // VIEWER/INTERVIEWER cannot import jobs from URLs.
+  const auth = await requirePermission('hiring_request.create')
   if (!auth.ok) {
     return { ok: false, error: { code: 'UNAUTHENTICATED', message: 'Please sign in.' } }
   }
@@ -387,7 +391,9 @@ export async function importJobFromUrlAction(
 export async function enablePublicPostingAction(
   jobId: string,
 ): Promise<{ ok: true; slug: string; url: string } | { ok: false; error: string }> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth(); now requirePermission so
+  // VIEWER/INTERVIEWER cannot flip a job to public.
+  const auth = await requirePermission('hiring_request.edit')
   if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
 
   // Verify ownership
@@ -426,7 +432,9 @@ export async function enablePublicPostingAction(
 export async function disablePublicPostingAction(
   jobId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth(); now requirePermission so
+  // VIEWER/INTERVIEWER cannot unpublish a job.
+  const auth = await requirePermission('hiring_request.edit')
   if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
 
   const job = await db.jobDescription.findFirst({

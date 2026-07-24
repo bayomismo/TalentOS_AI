@@ -28,6 +28,14 @@ datasource db {
 // Enums
 // -----------------------------------------------------------------------------
 
+/// Active org-membership roles. See lib/auth/permissions.ts for the
+/// per-role permission matrix.
+///
+/// CANDIDATE is reserved for a future candidate-facing portal (a
+/// logged-in version of the public application flow). No code path
+/// currently sets it — public applicants are anonymous and never
+/// create a User row. Do not assign CANDIDATE in new code without a
+/// portal implementation; remove it if no such portal ships by 2027.
 enum UserRole {
   ADMIN
   TA_LEAD

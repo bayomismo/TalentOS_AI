@@ -8,7 +8,7 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requirePermission } from '@/lib/auth'
 import type { Candidate } from '@/types'
 
 export interface CandidatesPayload {
@@ -126,12 +126,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 export async function createCandidateAction(
   input: CreateCandidateInput,
 ): Promise<CreateCandidateResult> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth() + hand-rolled role allowlist
+  // (which incorrectly included HIRING_MANAGER). The permission
+  // registry is the single source of truth: candidate.create is
+  // granted to ADMIN, TA_LEAD, RECRUITER only.
+  const auth = await requirePermission('candidate.create')
   if (!auth.ok) {
-    return { ok: false, error: 'You must be signed in to add a candidate.' }
-  }
-  const allowedRoles = ['ADMIN', 'TA_LEAD', 'RECRUITER', 'HIRING_MANAGER']
-  if (!auth.data.isAdmin && !allowedRoles.includes(auth.data.role)) {
     return { ok: false, error: 'You do not have permission to add candidates.' }
   }
   const orgId = auth.data.organizationId

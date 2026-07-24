@@ -17,7 +17,7 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requirePermission } from '@/lib/auth'
 import { recordAuditLog } from '@/lib/auth/audit'
 import { z } from 'zod'
 
@@ -193,7 +193,9 @@ export type ImportCandidatesResult =
 export async function importCandidatesAction(
   input: unknown,
 ): Promise<ImportCandidatesResult> {
-  const auth = await requireAuth()
+  // Sprint 18 audit — was requireAuth(); now requirePermission so
+  // VIEWER/INTERVIEWER cannot bulk-import candidates.
+  const auth = await requirePermission('candidate.create')
   if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
   const orgId = auth.data.organizationId
 

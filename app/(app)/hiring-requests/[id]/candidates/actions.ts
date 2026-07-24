@@ -22,6 +22,7 @@ import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
 import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
+import { validateStageTransition } from '@/lib/candidates/state-machine'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
@@ -292,6 +293,24 @@ export async function uploadCVsAction(
 
     // orgId and actorId are already in scope from the requirePermission call above.
     const storage = getFileStorage()
+
+    // Sprint 16 + 18 — per-org AI quota. Without this, a user with
+    // cv.upload permission could upload CVs in a loop and burn the
+    // entire monthly quota in minutes (audit-3 found this gap).
+    const quotaCheck = await enforceAiQuota(orgId, 'candidate_ranking')
+    if (!quotaCheck.allowed) {
+      return {
+        ok: false,
+        error: {
+          code: 'AI_LIMIT_REACHED',
+          message:
+            quotaCheck.message ??
+            `AI limit reached (${quotaCheck.used} of ${quotaCheck.quota} calls this month). The limit resets on ${quotaCheck.resetAt.toISOString().slice(0, 10)}.`,
+          retryable: false,
+        },
+      }
+    }
+
     const engine = getAIEngine()
     const bus = getEventBus()
 
@@ -1066,7 +1085,9 @@ export async function bulkMoveCandidatesAction(
   input: BulkMoveCandidatesInput
 ): Promise<ActionResult<BulkMoveCandidatesSuccess>> {
   try {
-    const auth = await requireAuth()
+    // Sprint 18 audit — was requireAuth(); now requirePermission so
+    // VIEWER/INTERVIEWER cannot move candidates between stages.
+    const auth = await requirePermission('candidate.change_stage')
     if (!auth.ok) return toActionFailure(auth)
     const orgId = auth.data.organizationId
     const actorId = auth.data.userId
@@ -1085,7 +1106,31 @@ export async function bulkMoveCandidatesAction(
     })
     const ownedIds = new Set(owned.map(c => c.id))
     const skippedCount = input.candidateIds.filter(id => !ownedIds.has(id)).length
-    const toUpdate = owned.filter(c => c.stage !== input.toStage)
+    // Sprint 18 — reject illegal stage transitions via the state machine.
+    // Candidates already at the target stage are skipped (no-op).
+    // Candidates whose current stage can't move to the target are
+    // reported as invalidTransitions so the UI can tell the user.
+    const toUpdate: typeof owned = []
+    const invalidTransitions: { id: string; from: string; to: string }[] = []
+    for (const c of owned) {
+      if (c.stage === input.toStage) continue // already there
+      const result = validateStageTransition(c.stage, input.toStage)
+      if (result.ok) {
+        toUpdate.push(c)
+      } else {
+        invalidTransitions.push({ id: c.id, from: c.stage, to: input.toStage })
+      }
+    }
+    if (invalidTransitions.length > 0) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_TRANSITION',
+          message: `${invalidTransitions.length} candidate(s) cannot move from their current stage to ${input.toStage}. Adjust the selection or move them through the proper stages first.`,
+          retryable: false,
+        },
+      }
+    }
 
     if (toUpdate.length === 0) {
       return { ok: true, data: { movedCount: 0, skippedCount } }

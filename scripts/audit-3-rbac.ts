@@ -59,7 +59,10 @@ async function main() {
 
       const hasRequireAuth = body.includes('requireAuth')
       const hasRequirePermission = body.includes('requirePermission') || body.includes('requireAllPermissions') || body.includes('requireAnyPermission')
-      const hasRoleAllowlist = /if\s*\([^)]*role[^)]*includes\(|if\s*\([^)]*allowedRoles/.test(body) || /ADMIN.*TA_LEAD.*RECRUITER/.test(body)
+      // Detect real role allowlist patterns: `if (allowedRoles.includes(role))`
+      // or `if (!allowedRoles.includes(...))` etc. The previous regex also
+      // matched inline comments mentioning role names — too noisy.
+      const hasRoleAllowlist = /if\s*\([^)]*role[^)]*includes\(|if\s*\([^)]*allowedRoles/.test(body)
 
       if (!hasRequireAuth && !hasRequirePermission) {
         noAuth.push(`${f}: ${name}`)
