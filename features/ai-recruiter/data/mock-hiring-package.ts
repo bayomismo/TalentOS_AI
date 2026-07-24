@@ -126,20 +126,62 @@ You'll work closely with design, product, and backend teams in a fast-moving env
 
 export function extractRoleFromPrompt(prompt: string): string {
   const normalized = prompt.trim()
+  if (!normalized) return ''
 
-  const hireMatch = normalized.match(/hire\s+(?:a\s+|an\s+|the\s+)?(.+)/i)
-  if (hireMatch?.[1]) {
-    return capitalizeRole(hireMatch[1])
-  }
-
-  const buildMatch = normalized.match(
-    /(?:build|create|generate).+(?:for|about)\s+(?:a\s+|an\s+|the\s+)?(.+)/i
+  // Try the verb pattern FIRST. This is the common case: "Hire a X",
+  // "I want to hire a X", "Create a job for a X", "Looking for a X",
+  // "Backfill for a X", etc.
+  //
+  // The capture starts after the verb (which itself may have a chain of
+  // auxiliaries like "want to", "are looking", etc.). We then strip
+  // leading articles and prepositions from the captured text so the
+  // result is the bare role name.
+  const verbMatch = normalized.match(
+    /(?:hire|recruit|find|need|want(?:\s+to)?|looking(?:\s+for)?|search(?:ing)?(?:\s+for)?|hiring|build|create|generate|write|draft|opening|backfill|staff|fill|recruiting|sourcing)\b[^\w]+(.+)/i,
   )
-  if (buildMatch?.[1]) {
-    return capitalizeRole(buildMatch[1])
+  if (verbMatch?.[1]) {
+    // The capture may start with another verb ("to hire" in "I want to
+    // hire a X") or with articles / prepositions. Strip them iteratively
+    // until we hit actual content.
+    let stripped = verbMatch[1].trim()
+    let prev = ''
+    while (prev !== stripped) {
+      prev = stripped
+      stripped = stripped
+        .replace(/^(?:a\s+|an\s+|the\s+|some\s+|new\s+)/i, '')
+        .replace(/^(?:role\s+of\s+|position\s+of\s+|job\s+(?:for|of)\s+)/i, '')
+        .replace(/^(?:for\s+(?:a\s+|an\s+|the\s+|some\s+|new\s+)?)/i, '')
+        .replace(/^(?:to\s+(?:a\s+|an\s+|the\s+|some\s+|new\s+)?)/i, '')
+        // The case "I want to hire a X" — the inner verb is "hire" + "a X"
+        .replace(/^(?:hire|recruit|find|need|build|create|generate|write|draft|opening|backfill|staff|fill)\s+(?:a\s+|an\s+|the\s+|some\s+|new\s+)*/i, '')
+        .trim()
+    }
+    // If the capture is too long, it's not really a role name — it's
+    // the tail of a long sentence. Bail out and let the AI infer from
+    // the full prompt (which the caller passes as extraContext).
+    if (stripped && stripped.length <= 80 && !/[.!?]/.test(stripped)) {
+      return capitalizeRole(stripped)
+    }
   }
 
-  return 'Senior Frontend Developer'
+  // No verb pattern matched. If the prompt looks like a bare role name
+  // (short, no sentence punctuation), use the whole thing as the role.
+  //
+  // Previous behavior was to fall back to a hardcoded "Senior Frontend
+  // Developer" — which silently generated a JD for the wrong role
+  // whenever the user typed just the role name. That was a real UX bug.
+  if (
+    normalized.length <= 80 &&
+    !/[.!?;]/.test(normalized) &&
+    !/,\s*\w+\s+\w+/.test(normalized) // contains a comma (likely a sentence)
+  ) {
+    return capitalizeRole(normalized)
+  }
+
+  // Long, free-form prompt. Caller will pass it as extraContext; we
+  // don't try to extract a role from it here. Return empty so the
+  // caller knows to use the prompt itself as the role.
+  return ''
 }
 
 function capitalizeRole(role: string): string {

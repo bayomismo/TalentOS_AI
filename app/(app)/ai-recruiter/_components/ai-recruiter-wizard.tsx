@@ -176,8 +176,16 @@ function WizardInner() {
     startWorkflow()
 
     startTransition(async () => {
+      // Sprint 18 — if extractRoleFromPrompt couldn't pick a role out of
+      // the prompt (e.g. user wrote a long free-form description instead
+      // of "Hire a X"), use the trimmed prompt itself as the role. The
+      // AI then sees it both in `role` and in `extraContext`. The
+      // previous behavior was to fall back to a hardcoded
+      // "Senior Frontend Developer" — which silently generated a JD
+      // for the wrong role whenever the user typed a long paragraph.
+      const roleForAi = meta.role.trim() || prompt.trim().slice(0, 200)
       const result: ActionResult<GenerateJobDescriptionSuccess> = await generateJobDescriptionAction({
-        role: meta.role,
+        role: roleForAi,
         department: meta.department,
         employmentType: meta.employmentType,
         experience: meta.experience,
