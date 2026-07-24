@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { useDispatchDraft, useDraft, usePhase, useWizard } from './wizard-state'
+import { useDispatchDraft, useDraft, usePhase } from './wizard-state'
 import { cn } from '@/lib/utils'
 
 const FIELD_DEFS = {
@@ -44,15 +44,22 @@ const FIELD_DEFS = {
 export function ReviewScreen({
   onSaveDraft,
   onCreate,
+  onRegenerate,
 }: {
   /** Called when the user clicks the "Save draft" button. */
   onSaveDraft?: () => void
   /** Called when the user clicks the "Create hiring request" button. */
   onCreate?: () => void
+  /**
+   * Called when the user clicks "Regenerate". The wizard's regenerate
+   * handler re-runs the AI with the same prompt and replaces the
+   * current draft. We delegate to the wizard because that's where the
+   * AI call lives.
+   */
+  onRegenerate?: () => void
 }) {
   const draft = useDraft()
   const phase = usePhase()
-  const { dispatch } = useWizard()
   const { patch, patchMeta, patchList, addListItem, removeListItem, patchCriterion, removeCriterion, addCriterion } =
     useDispatchDraft()
 
@@ -329,7 +336,7 @@ export function ReviewScreen({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
-              onClick={() => dispatch({ type: 'generate-start' })}
+              onClick={() => onRegenerate?.()}
               disabled={isSaving}
             >
               <SparklesIcon className="h-4 w-4" aria-hidden />

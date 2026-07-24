@@ -166,7 +166,7 @@ function WizardInner() {
     return { role, department, employmentType: 'FULL_TIME', experience }
   }
 
-  async function handleSubmit(prompt: string) {
+  async function runGeneration(prompt: string) {
     if (!prompt.trim()) return
     setError(null)
     resetWorkflow()
@@ -218,6 +218,19 @@ function WizardInner() {
         payload: { jobDescription: snapshotFromDraft(result.data.draft), source: 'wizard' },
       })
     })
+  }
+
+  function handleSubmit(prompt: string) {
+    void runGeneration(prompt)
+  }
+
+  // Sprint 18 — Regenerate from the review screen. The old behavior
+  // dispatched `generate-start` which set the phase to 'generating' and
+  // showed the workflow animation, but never re-called the AI. The
+  // animation would run, time out, and the user would be stuck on a
+  // stale draft. We now re-run with the current prompt.
+  function handleRegenerate() {
+    void runGeneration(state.prompt)
   }
 
   // Save side-effect: when the reducer puts the wizard into the 'saving'
@@ -297,7 +310,11 @@ function WizardInner() {
         role="region"
         aria-label="Hiring request review"
       >
-        <ReviewScreen onSaveDraft={() => beginSave('draft')} onCreate={() => beginSave('create')} />
+        <ReviewScreen
+          onSaveDraft={() => beginSave('draft')}
+          onCreate={() => beginSave('create')}
+          onRegenerate={handleRegenerate}
+        />
         {phase === 'saved' && state.lastSavedHiringRequestId && (
           <SavedBanner
             hiringRequestTitle={state.prompt}
