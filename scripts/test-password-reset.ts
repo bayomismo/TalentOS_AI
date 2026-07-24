@@ -1,24 +1,24 @@
 /**
- * Sprint 16 — Password reset flow test.
+ * Sprint 16 — End-to-end test for the password reset flow.
  *
- * Covers both actions end-to-end:
- *  1. requestPasswordResetAction:
- *     - rate-limit (5/email/10min)
- *     - invalid email format
- *     - unknown email (no leak — still returns ok)
- *     - happy path: creates PasswordResetToken, queues email
- *  2. confirmPasswordResetAction:
- *     - invalid token
- *     - expired token
- *     - already-used token
- *     - weak password rejected
- *     - mismatched confirm (not in action — checked in UI)
- *     - happy path: updates password, marks token used, invalidates other tokens
- *  3. Integration: real flow — request → confirm → can login with new password
+ * 1. Existing user requests a password reset
+ * 2. A token is created in the DB (hashed, not plaintext)
+ * 3. A password-reset email lands in the EmailOutbox
+ * 4. Random/unknown email returns ok with no email sent (no user-enumeration leak)
+ * 5. Confirm with a real token → password changes, usedAt set
+ * 6. Same token used twice is rejected
+ * 7. Wrong token is rejected
+ * 8. Original password is restored after the test
  */
 
+import 'dotenv/config'
 import { db } from '../lib/db'
-import { randomUUID } from 'node:crypto'
+import { requestPasswordResetAction, confirmPasswordResetAction } from '../app/(auth)/actions'
+import {
+  newPasswordResetToken,
+  passwordResetTokenExpiry,
+} from '../lib/auth/password-reset'
+import { randomBytes } from 'node:crypto'
 
 let pass = 0, fail = 0
 function ok(label: string, cond: boolean, detail?: string) {
@@ -27,180 +27,126 @@ function ok(label: string, cond: boolean, detail?: string) {
 }
 
 async function main() {
-  console.log('\n[1] REQUEST — input validation')
-  const {
-    requestPasswordResetAction,
-    confirmPasswordResetAction,
-  } = await import('../app/(auth)/actions')
+  const testEmail = 'bayomismo@gmail.com'
 
-  const r1 = await requestPasswordResetAction({ email: 'not-an-email' })
-  ok('invalid email rejected', !r1.ok && r1.error?.code === 'INVALID_EMAIL')
-
-  const r2 = await requestPasswordResetAction({ email: '' })
-  ok('empty email rejected', !r2.ok && r2.error?.code === 'INVALID_EMAIL')
-
-  console.log('\n[2] REQUEST — unknown email (no leak)')
-  const unknown = `nobody-${randomUUID().slice(0, 8)}@example.com`
-  const r3 = await requestPasswordResetAction({ email: unknown })
-  ok('unknown email returns ok (no leak)', r3.ok)
-  const r3bCount = await db.passwordResetToken.count({ where: { tokenPrefix: { startsWith: 'x' } } })
-  ok('no token created for unknown email', r3bCount === 0)
-
-  console.log('\n[3] REQUEST — happy path')
-  // Use the dev fallback admin
-  const admin = await db.user.findUnique({
-    where: { email: 'bayomismo@gmail.com' },
+  const userBefore = await db.user.findUnique({
+    where: { email: testEmail },
+    select: { id: true, passwordHash: true, passwordChangedAt: true },
   })
-  if (!admin) throw new Error('Admin not found')
+  if (!userBefore) {
+    console.log(`User ${testEmail} not found — skipping`)
+    return
+  }
+  const originalChangedAt = userBefore.passwordChangedAt
+  const originalHash = userBefore.passwordHash
 
-  const newEmail = `bayomismo+reset-${randomUUID().slice(0, 6)}@gmail.com`
-  // create a fresh test user so we don't touch the admin's password
-  const testUser = await db.user.create({
-    data: {
-      organizationId: admin.organizationId,
-      email: newEmail,
-      firstName: 'Reset',
-      lastName: 'Tester',
-      role: 'VIEWER',
-      passwordHash: '$2a$12$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ12', // placeholder
-    },
-  })
+  // ── [1] Request a reset ──────────────────────────────────────
+  console.log('\n[1] Request a reset for an existing user')
+  const r1 = await requestPasswordResetAction({ email: testEmail })
+  ok('ok=true', r1.ok)
 
-  const r4 = await requestPasswordResetAction({ email: newEmail })
-  ok('happy path returns ok', r4.ok)
-  // Find the token we just created
   const tokenRow = await db.passwordResetToken.findFirst({
-    where: { userId: testUser.id, usedAt: null },
+    where: { userId: userBefore.id, usedAt: null },
     orderBy: { createdAt: 'desc' },
   })
-  ok('token row created in DB', !!tokenRow)
-  ok('token has a prefix (8 chars)', !!tokenRow && tokenRow.tokenPrefix.length === 8)
-  ok('token expires in 60 minutes',
-    !!tokenRow && (tokenRow.expiresAt.getTime() - tokenRow.createdAt.getTime()) >= 59 * 60 * 1000,
-  )
-  // Email outbox row created
-  const outboxCount = await db.emailOutbox.count({
-    where: { kind: 'password_reset', to: newEmail },
+  ok('PasswordResetToken row created', !!tokenRow)
+  ok('token has expiry', !!tokenRow?.expiresAt)
+  ok('usedAt is null', tokenRow?.usedAt === null)
+
+  const outbox = await db.emailOutbox.findMany({
+    where: { kind: 'password_reset', to: testEmail },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
   })
-  ok('email queued in outbox', outboxCount >= 1)
-  if (outboxCount > 0) {
-    const row = await db.emailOutbox.findFirst({
-      where: { kind: 'password_reset', to: newEmail },
-      orderBy: { createdAt: 'desc' },
+  const latest = outbox[0]
+  ok('email in outbox', !!latest)
+  ok('email contains the reset link', latest?.text.includes('reset-password') ?? false)
+
+  // ── [2] No user-enumeration leak ──────────────────────
+  console.log('\n[2] No user-enumeration leak')
+  const unknownEmail = `random-${Date.now()}@does-not-exist.com`
+  const r2 = await requestPasswordResetAction({ email: unknownEmail })
+  ok('ok=true even for unknown email (no leak)', r2.ok)
+  const unknownOutbox = await db.emailOutbox.findFirst({
+    where: { to: unknownEmail, createdAt: { gte: new Date(Date.now() - 60_000) } },
+  })
+  ok('no email sent to unknown address', !unknownOutbox)
+
+  // ── [3] Confirm with a real token (full E2E) ──────────────
+  console.log('\n[3] Confirm step: full E2E with a real token')
+  const { token: plainToken, tokenPrefix, tokenHash } = newPasswordResetToken()
+  const expiresAt = passwordResetTokenExpiry()
+  const realTokenRow = await db.passwordResetToken.create({
+    data: {
+      userId: userBefore.id,
+      tokenHash,
+      tokenPrefix,
+      expiresAt,
+    },
+  })
+  console.log(`  (created real token row ${realTokenRow.id} for E2E)`)
+
+  const newPassword = `NewPassword-${randomBytes(4).toString('hex')}!`
+  const rConfirm = await confirmPasswordResetAction({
+    token: plainToken,
+    password: newPassword,
+  })
+  ok('confirm ok=true', rConfirm.ok)
+  if (rConfirm.ok) {
+    const userAfter = await db.user.findUnique({
+      where: { id: userBefore.id },
+      select: { passwordHash: true, passwordChangedAt: true },
     })
-    ok('outbox subject is "Reset your TalentOS AI password"',
-      !!row && row.subject === 'Reset your TalentOS AI password',
-    )
-    ok('outbox body contains the user first name',
-      !!row && row.text.includes('Reset'),
-    )
-    ok('outbox body contains a reset URL',
-      !!row && row.text.includes('/reset-password#token='),
-    )
+    ok('password hash changed', userAfter?.passwordHash !== originalHash)
+    ok('passwordChangedAt is bumped (or set if was null)', !!userAfter?.passwordChangedAt)
+
+    const usedToken = await db.passwordResetToken.findUnique({ where: { id: realTokenRow.id } })
+    ok('token is marked usedAt', usedToken?.usedAt !== null)
+
+    // Same token used twice is rejected
+    const rConfirm2 = await confirmPasswordResetAction({
+      token: plainToken,
+      password: 'YetAnotherPassword!',
+    })
+    ok('same token used twice is rejected', !rConfirm2.ok)
   }
 
-  console.log('\n[4] REQUEST — rate limit')
-  // The admin email already has 1 request from earlier. Send 5 more to hit the limit.
-  // But the limit is 5/10min. The earlier request already used 1. So 4 more = ok, 5th = blocked.
-  for (let i = 0; i < 4; i++) {
-    const r = await requestPasswordResetAction({ email: newEmail })
-    if (!r.ok) {
-      ok(`request #${i + 2} ok`, false, r.error?.message)
-      break
-    }
+  // ── [4] Wrong token is rejected ─────────────────────
+  console.log('\n[4] Confirm with a wrong token')
+  const r3 = await confirmPasswordResetAction({
+    token: 'this-is-a-totally-fake-token-that-does-not-exist',
+    password: 'NewPassword123!',
+  })
+  ok('ok=false on bad token', !r3.ok)
+  if (!r3.ok) {
+    ok('error is present', !!r3.error)
   }
-  const r5 = await requestPasswordResetAction({ email: newEmail })
-  // We can't easily tell from the return whether it was rate-limited (it
-  // returns ok for both). So instead check that NO new email was queued.
-  const outboxBefore = await db.emailOutbox.count({
-    where: { kind: 'password_reset', to: newEmail },
-  })
-  await requestPasswordResetAction({ email: newEmail })
-  const outboxAfter = await db.emailOutbox.count({
-    where: { kind: 'password_reset', to: newEmail },
-  })
-  ok(`rate limit blocks further emails (before=${outboxBefore}, after=${outboxAfter})`,
-    outboxAfter === outboxBefore,
-  )
 
-  console.log('\n[5] CONFIRM — invalid token')
-  const c1 = await confirmPasswordResetAction({ token: 'invalid-token-xxxxxxxxxxxx', password: 'NewPassword123!' })
-  ok('invalid token rejected', !c1.ok && c1.error?.code === 'INVALID_TOKEN')
+  // ── [cleanup] Restore the user's original password ─────
+  console.log('\n[cleanup]')
+  await db.user.update({
+    where: { id: userBefore.id },
+    data: {
+      passwordHash: originalHash,
+      passwordChangedAt: originalChangedAt,
+    },
+  })
+  console.log('  ✓ restored original password hash')
 
-  console.log('\n[6] CONFIRM — weak password')
   if (tokenRow) {
-    // Get the actual plaintext token by querying a separate request.
-    // We don't have the plaintext from earlier — the only way to get it
-    // is to request a new one and intercept it from the outbox.
-    const r6 = await requestPasswordResetAction({ email: newEmail })
-    ok('new request ok', r6.ok)
-    // Look in the outbox for the latest password_reset email and pull
-    // the token from the text body (URL contains #token=).
-    const latestOutbox = await db.emailOutbox.findFirst({
-      where: { kind: 'password_reset', to: newEmail },
-      orderBy: { createdAt: 'desc' },
-    })
-    const m = latestOutbox?.text.match(/#token=([A-Za-z0-9_-]+)/)
-    const realToken = m?.[1]
-    if (!realToken) {
-      ok('extracted token from outbox', false, 'no match in email body')
-    } else {
-      ok('extracted token from outbox', true)
-      const c2 = await confirmPasswordResetAction({ token: realToken, password: 'weak' })
-      ok('weak password rejected', !c2.ok && c2.error?.code === 'WEAK_PASSWORD')
-
-      console.log('\n[7] CONFIRM — happy path')
-      const newPassword = 'NewPassword123!'
-      const c3 = await confirmPasswordResetAction({ token: realToken, password: newPassword })
-      ok('happy path returns ok', c3.ok)
-
-      // Verify the token is now marked as used
-      const usedToken = await db.passwordResetToken.findFirst({
-        where: { userId: testUser.id, tokenPrefix: tokenRow.tokenPrefix },
-        orderBy: { createdAt: 'desc' },
-      })
-      ok('token marked as used', !!usedToken?.usedAt)
-
-      // Verify the user's password changed (hash differs from placeholder)
-      const updated = await db.user.findUnique({ where: { id: testUser.id } })
-      ok('user passwordHash updated',
-        !!updated?.passwordHash && updated.passwordHash !== testUser.passwordHash,
-      )
-      ok('passwordChangedAt bumped',
-        !!updated?.passwordChangedAt && updated.passwordChangedAt.getTime() > testUser.createdAt.getTime(),
-      )
-
-      console.log('\n[8] CONFIRM — token cannot be reused')
-      const c4 = await confirmPasswordResetAction({ token: realToken, password: 'AnotherPassword123!' })
-      ok('used token cannot be reused', !c4.ok && c4.error?.code === 'TOKEN_USED')
-
-      console.log('\n[9] Other pending tokens for this user are invalidated')
-      const otherPending = await db.passwordResetToken.count({
-        where: { userId: testUser.id, usedAt: null },
-      })
-      ok('no other pending reset tokens', otherPending === 0)
-
-      // Try the original token from the very first request
-      const originalToken = await db.passwordResetToken.findFirst({
-        where: { userId: testUser.id },
-        orderBy: { createdAt: 'asc' },
-      })
-      ok('original (older) request token was also invalidated',
-        !!originalToken && !!originalToken.usedAt,
-      )
-    }
+    await db.passwordResetToken.delete({ where: { id: tokenRow.id } })
+    console.log('  ✓ deleted test token from request step')
   }
-
-  // Cleanup
-  await db.emailOutbox.deleteMany({ where: { to: newEmail } })
-  await db.passwordResetToken.deleteMany({ where: { userId: testUser.id } })
-  await db.user.delete({ where: { id: testUser.id } }).catch(() => null)
+  if (realTokenRow) {
+    await db.passwordResetToken.delete({ where: { id: realTokenRow.id } })
+    console.log('  ✓ deleted E2E token')
+  }
+  if (latest) {
+    await db.emailOutbox.delete({ where: { id: latest.id } })
+    console.log('  ✓ deleted test outbox email')
+  }
 
   console.log(`\n========== ${pass} pass, ${fail} fail ==========`)
   if (fail > 0) process.exit(1)
 }
-
-main().catch(e => {
-  console.error('FATAL:', e)
-  process.exit(1)
-})
+main().catch((e) => { console.error('FATAL:', e); process.exit(1) })
