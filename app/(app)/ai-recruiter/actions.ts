@@ -259,9 +259,9 @@ export async function createHiringRequestAction(
       }
     }
 
-    revalidatePath('/dashboard')
-    revalidatePath('/hiring-requests')
-    revalidatePath('/ai-recruiter')
+    safeRevalidate('/dashboard')
+    safeRevalidate('/hiring-requests')
+    safeRevalidate('/ai-recruiter')
 
     return {
       ok: true,

@@ -18,6 +18,7 @@
  * Errors are typed via `ActionResult` and never leak raw exceptions.
  */
 
+import { safeRevalidate } from '@/lib/utils/revalidate'
 import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
@@ -1177,7 +1178,7 @@ export async function bulkMoveCandidatesAction(
       metadata: { count: toUpdate.length, toStage: input.toStage } as any,
     }).catch(() => null)
 
-    revalidatePath('/candidates')
+    safeRevalidate('/candidates')
     return { ok: true, data: { movedCount: toUpdate.length, skippedCount } }
   } catch (err) {
     return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Unexpected error', retryable: true } }
