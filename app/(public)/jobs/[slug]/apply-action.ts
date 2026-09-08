@@ -95,7 +95,7 @@ export async function submitPublicApplicationAction(
 
   // 2. Rate limit by IP
   const ip = meta.ip ?? 'unknown'
-  const rl = rateLimit(`public-apply:${ip}`, IP_RATE_LIMIT, IP_RATE_WINDOW_SEC)
+  const rl = await rateLimit(`public-apply:${ip}`, IP_RATE_LIMIT, IP_RATE_WINDOW_SEC)
   if (!rl.ok) {
     return {
       ok: false,

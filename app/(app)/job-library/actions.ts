@@ -127,7 +127,7 @@ export async function createJobTemplateAction(
   }
   const { title, level, category, summary, description, requiredSkills } = parsed.data
 
-  const rl = rateLimit(`create_template:${auth.data.organizationId}`, 20, 60 * 60)
+  const rl = await rateLimit(`create_template:${auth.data.organizationId}`, 20, 60 * 60)
   if (!rl.ok) {
     return {
       ok: false,
@@ -266,7 +266,7 @@ export async function importJobFromUrlAction(
   }
   const { url } = parsed.data
 
-  const rl = rateLimit(`import_url:${auth.data.organizationId}`, 30, 60 * 60)
+  const rl = await rateLimit(`import_url:${auth.data.organizationId}`, 30, 60 * 60)
   if (!rl.ok) {
     return {
       ok: false,

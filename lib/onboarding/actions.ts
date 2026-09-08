@@ -42,11 +42,11 @@ export async function publicSignupAction(input: unknown): Promise<{ ok: boolean;
   }
   // Rate-limit by email (to prevent email enumeration) and a global
   // bucket to throttle the signup endpoint.
-  const emailBucket = rateLimit(`signup:email:${parsed.data.email.toLowerCase()}`, 5, 60 * 10)
+  const emailBucket = await rateLimit(`signup:email:${parsed.data.email.toLowerCase()}`, 5, 60 * 10)
   if (!emailBucket.ok) {
     return { ok: false, error: { code: 'RATE_LIMITED', message: 'Too many signup attempts for this email. Please try again later.' } }
   }
-  const globalBucket = rateLimit('signup:global', 30, 60 * 10)
+  const globalBucket = await rateLimit('signup:global', 30, 60 * 10)
   if (!globalBucket.ok) {
     return { ok: false, error: { code: 'RATE_LIMITED', message: 'Too many signups. Please try again in a few minutes.' } }
   }

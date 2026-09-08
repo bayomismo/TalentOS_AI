@@ -1410,3 +1410,30 @@ model InterviewReminderToken {
 
   @@index([organizationId])
 }
+
+// ---------------------------------------------------------------------------
+// RateLimitHit — Sprint 19
+//
+// Distributed fixed-window rate limiter. Replaces the in-memory Map in
+// lib/auth/rate-limit.ts, which did not hold across Vercel's many
+// short-lived Lambda instances (each instance had its own empty map).
+//
+// One row per (bucketKey, windowStart). Each rate-limited action does a
+// single atomic upsert (`INSERT ... ON CONFLICT DO UPDATE count = count + 1`)
+// and reads the post-increment count back, so concurrent callers on
+// different instances cannot both slip under the limit.
+//
+// `expiresAt` = windowStart + window. Expired rows are swept
+// opportunistically on a small fraction of calls; no cron needed.
+// ---------------------------------------------------------------------------
+model RateLimitHit {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bucketKey   String
+  windowStart DateTime
+  count       Int      @default(0)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([bucketKey, windowStart])
+  @@index([expiresAt])
+}
