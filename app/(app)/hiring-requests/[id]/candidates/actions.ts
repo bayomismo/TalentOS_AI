@@ -26,7 +26,7 @@ import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
 import { validateStageTransition } from '@/lib/candidates/state-machine'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
-import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { checkAiQuota, enforceAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import { getFileStorage } from '@/lib/storage'
 import { parseCV, CVError } from '@/lib/cv'
 import { getEventBus } from '@/lib/events'
@@ -291,6 +291,10 @@ export async function uploadCVsAction(
         },
       }
     }
+    // Local alias: TS keeps a const's narrowing inside the closures passed
+    // to runWithAiReservation below; a `hr.jobDescription` property access
+    // would not stay narrowed.
+    const jobDesc = hr.jobDescription
 
     // orgId and actorId are already in scope from the requirePermission call above.
     const storage = getFileStorage()
@@ -298,7 +302,10 @@ export async function uploadCVsAction(
     // Sprint 16 + 18 — per-org AI quota. Without this, a user with
     // cv.upload permission could upload CVs in a loop and burn the
     // entire monthly quota in minutes (audit-3 found this gap).
-    const quotaCheck = await enforceAiQuota(orgId, 'candidate_ranking')
+    //
+    // Pre-flight only: fail fast if the org is already over the cap. The
+    // authoritative reservation happens per file inside the loop below.
+    const quotaCheck = await checkAiQuota(orgId)
     if (!quotaCheck.allowed) {
       return {
         ok: false,
@@ -364,37 +371,33 @@ export async function uploadCVsAction(
         const { url: storageUrl } = await storage.put(storageKey, buffer, parsed.mimeType)
     
         // Run AI CV analysis with job context
-            // Sprint 16 — per-org AI quota. Refuse if over limit.
-            const quotaCheck = await enforceAiQuota(orgId, 'cv_analysis')
-            if (!quotaCheck.allowed) {
+            // Sprint 16 — per-org AI quota. Authoritative reservation; if the
+            // engine throws, runWithAiReservation releases it before the throw
+            // reaches this loop's per-file catch (which does failed++, continue).
+            const cvQuota = await enforceAiQuota(orgId, 'cv_analysis')
+            if (!cvQuota.allowed) {
               return {
                 ok: false,
                 error: {
                   code: 'AI_LIMIT_REACHED',
-                  message: quotaCheck.message ?? 'AI limit reached for this month.',
+                  message: cvQuota.message ?? 'AI limit reached for this month.',
                   retryable: false,
                 },
-                meta: { used: quotaCheck.used, quota: quotaCheck.quota, resetAt: quotaCheck.resetAt.toISOString() },
+                meta: { used: cvQuota.used, quota: cvQuota.quota, resetAt: cvQuota.resetAt.toISOString() },
               }
             }
-            const analysisResult = await engine.analyzeCV({
+            const analysisResult = await runWithAiReservation(cvQuota, () => engine.analyzeCV({
           cvText: parsed.text,
           jobContext: {
-            title: hr.jobDescription.title,
-            summary: hr.jobDescription.summary ?? '',
-            requiredSkills: hr.jobDescription.requiredSkills,
-            niceToHaveSkills: hr.jobDescription.niceToHave,
+            title: jobDesc.title,
+            summary: jobDesc.summary ?? '',
+            requiredSkills: jobDesc.requiredSkills,
+            niceToHaveSkills: jobDesc.niceToHave,
           },
-        })
-            await recordAiUsage({
-              organizationId: orgId,
-              feature: 'cv_analysis',
-              tokensIn: analysisResult.usage.inputTokens,
-              tokensOut: analysisResult.usage.outputTokens,
-            })
+        }), (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }))
 
         const profile = analysisResult.data
-    
+
         // Run rank against the JD
             const rankingQuota = await enforceAiQuota(orgId, 'candidate_ranking')
             if (!rankingQuota.allowed) {
@@ -408,15 +411,15 @@ export async function uploadCVsAction(
                 meta: { used: rankingQuota.used, quota: rankingQuota.quota, resetAt: rankingQuota.resetAt.toISOString() },
               }
             }
-            const rankingResult = await engine.rankCandidate({
+            const rankingResult = await runWithAiReservation(rankingQuota, () => engine.rankCandidate({
           candidateId: '__pending__', // assigned after create
           hiringRequestId: hr.id,
           jobDescription: {
-            title: hr.jobDescription.title,
-            summary: hr.jobDescription.summary ?? '',
-            responsibilities: hr.jobDescription.responsibilities,
-            requiredSkills: hr.jobDescription.requiredSkills,
-            niceToHaveSkills: hr.jobDescription.niceToHave,
+            title: jobDesc.title,
+            summary: jobDesc.summary ?? '',
+            responsibilities: jobDesc.responsibilities,
+            requiredSkills: jobDesc.requiredSkills,
+            niceToHaveSkills: jobDesc.niceToHave,
             qualifications: [],
           },
           candidateProfile: {
@@ -438,15 +441,9 @@ export async function uploadCVsAction(
               field: e.field,
             })),
           },
-        })
+        }), (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }))
         const ranking: CandidateRankingOutput = rankingResult.data
-        await recordAiUsage({
-          organizationId: orgId,
-          feature: 'candidate_ranking',
-          tokensIn: rankingResult.usage.inputTokens,
-          tokensOut: rankingResult.usage.outputTokens,
-        })
-    
+
         // Persist candidate + related rows in a single transaction.
         const [nameFirst, ...nameRest] = profile.fullName.trim().split(/\s+/)
         const lastName = nameRest.join(' ') || nameFirst
@@ -802,7 +799,7 @@ export async function reanalyzeCandidateAction(
       }
     }
 
-    const ranking = await engine.rankCandidate({
+    const ranking = await runWithAiReservation(quotaCheck, () => engine.rankCandidate({
       candidateId: candidate.id,
       hiringRequestId: candidate.hiringRequestId,
       jobDescription: {
@@ -832,14 +829,7 @@ export async function reanalyzeCandidateAction(
           field: e.field,
         })),
       },
-    })
-
-    await recordAiUsage({
-      organizationId: orgId,
-      feature: 'candidate_ranking',
-      tokensIn: ranking.usage.inputTokens,
-      tokensOut: ranking.usage.outputTokens,
-    })
+    }), (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }))
 
     await db.candidate.update({
       where: { id: candidate.id },

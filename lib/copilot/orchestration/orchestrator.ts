@@ -27,7 +27,7 @@ import {
   getAllowedActionIds,
 } from '../actions/registry'
 import { recordAuditLog } from '@/lib/auth/audit'
-import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { enforceAiQuota, releaseAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import { MAX_TOOL_CALLS_PER_TURN } from '../types'
 import type { CopilotAuthContext } from '../types'
 import type { ActionExecutionResult, ActionFailure } from '../actions/types'
@@ -375,24 +375,27 @@ async function handleReadQuery(
   args: AskCopilotArgs,
   start: number,
 ): Promise<AskCopilotResult> {
-  // Sprint 16 — per-org AI quota. Refuse if over limit.
-  const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
-  if (!quotaCheck.allowed) {
-    // Return a well-formed read_response so the UI renders the limit
-    // message. (Previously this returned a shape with no `ok`/`outcome`,
-    // which the copilot page could not render.)
+  // Sprint 19 — ONE authoritative quota reservation for the whole read
+  // query. It is finalized by generateCopilotResponse (in response.ts)
+  // when the model call succeeds, released there when the model call
+  // throws, and released here on every path that never reaches that
+  // point (over limit, prompt-injection, no tool matched, or any throw
+  // during intent routing / tool execution).
+  const reservation = await enforceAiQuota(ctx.organizationId, 'copilot')
+  if (!reservation.allowed) {
+    // Well-formed read_response so the copilot page renders the message.
     return {
       ok: true,
       outcome: {
         kind: 'read_response',
         response: {
-          answer: quotaCheck.message ?? 'AI limit reached for this month.',
+          answer: reservation.message ?? 'AI limit reached for this month.',
           findings: [],
           records: [],
           suggestedQuestions: [],
           limitations: [
             'AI monthly limit reached. The limit resets on ' +
-              quotaCheck.resetAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+              reservation.resetAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
               '.',
           ],
         },
@@ -402,64 +405,75 @@ async function handleReadQuery(
     }
   }
 
-  const intent = await routeReadIntent(args.userMessage, { preferDeterministic: true })
-  if ('injectionDetected' in intent && intent.injectionDetected) {
+  try {
+    const intent = await routeReadIntent(args.userMessage, { preferDeterministic: true })
+    if ('injectionDetected' in intent && intent.injectionDetected) {
+      await releaseAiQuota(reservation.usageId)
+      await recordAuditLog({
+        organizationId: ctx.organizationId,
+        actorId: ctx.userId,
+        action: 'COPILOT_PROMPT_INJECTION_BLOCKED',
+        targetType: 'copilot',
+        targetId: null,
+        outcome: 'denied',
+        reason: 'intent_router_block',
+        metadata: {},
+      })
+      return { ok: false, blockedReason: 'Your question was blocked by a security check.' }
+    }
+    const toolCalls = (intent as { tools: Array<{ toolId: string; arguments: Record<string, unknown> }> }).tools.slice(0, MAX_TOOL_CALLS_PER_TURN)
+    if (toolCalls.length === 0) {
+      await releaseAiQuota(reservation.usageId)
+      return {
+        ok: true,
+        outcome: {
+          kind: 'read_response',
+          response: {
+            answer: 'I could not determine which tool to use to answer your question. Try rephrasing it more specifically.',
+            findings: [],
+            records: [],
+            suggestedQuestions: [
+              'Which positions are currently open?',
+              'Which candidates are awaiting evaluation?',
+              'Which offers are waiting for approval?',
+            ],
+            limitations: ['No matching tool for the input.'],
+          },
+        },
+      }
+    }
+
+    const r = await runReadToolsAndGenerateResponse({
+      ctx,
+      userMessage: args.userMessage,
+      toolCalls,
+      history: args.history,
+      usageId: reservation.usageId,
+    })
+
     await recordAuditLog({
       organizationId: ctx.organizationId,
       actorId: ctx.userId,
-      action: 'COPILOT_PROMPT_INJECTION_BLOCKED',
+      action: 'COPILOT_QUERY_EXECUTED',
       targetType: 'copilot',
-      targetId: null,
-      outcome: 'denied',
-      reason: 'intent_router_block',
-      metadata: {},
+      targetId: r.taskId,
+      outcome: 'success',
+      metadata: { toolIds: r.toolIds, modelUsed: r.modelUsed },
     })
-    return { ok: false, blockedReason: 'Your question was blocked by a security check.' }
-  }
-  const toolCalls = (intent as { tools: Array<{ toolId: string; arguments: Record<string, unknown> }> }).tools.slice(0, MAX_TOOL_CALLS_PER_TURN)
-  if (toolCalls.length === 0) {
+
     return {
       ok: true,
-      outcome: {
-        kind: 'read_response',
-        response: {
-          answer: 'I could not determine which tool to use to answer your question. Try rephrasing it more specifically.',
-          findings: [],
-          records: [],
-          suggestedQuestions: [
-            'Which positions are currently open?',
-            'Which candidates are awaiting evaluation?',
-            'Which offers are waiting for approval?',
-          ],
-          limitations: ['No matching tool for the input.'],
-        },
-      },
+      outcome: { kind: 'read_response', response: r.response },
+      modelUsed: r.modelUsed,
+      toolIds: r.toolIds,
+      durationMs: Date.now() - start,
     }
-  }
-
-  const r = await runReadToolsAndGenerateResponse({
-    ctx,
-    userMessage: args.userMessage,
-    toolCalls,
-    history: args.history,
-  })
-
-  await recordAuditLog({
-    organizationId: ctx.organizationId,
-    actorId: ctx.userId,
-    action: 'COPILOT_QUERY_EXECUTED',
-    targetType: 'copilot',
-    targetId: r.taskId,
-    outcome: 'success',
-    metadata: { toolIds: r.toolIds, modelUsed: r.modelUsed },
-  })
-
-  return {
-    ok: true,
-    outcome: { kind: 'read_response', response: r.response },
-    modelUsed: r.modelUsed,
-    toolIds: r.toolIds,
-    durationMs: Date.now() - start,
+  } catch (err) {
+    // routeReadIntent / executeTool / aiTask persistence threw before the
+    // model call owned the reservation. (A throw from generateCopilotResponse
+    // is caught inside read-flow and already released there.)
+    await releaseAiQuota(reservation.usageId)
+    throw err
   }
 }
 
@@ -530,13 +544,13 @@ Do not wrap in markdown. Emit JSON only.`
     }
 
     const engine = getAIEngine()
-    const result = await engine.callCopilotRouter(systemPrompt, userPrompt)
-    await recordAiUsage({
-      organizationId: ctx.organizationId,
-      feature: 'copilot',
-      tokensIn: result.usage?.inputTokens,
-      tokensOut: result.usage?.outputTokens,
-    })
+    // Finalizes the reservation on success; releases it (then rethrows into
+    // the catch below) if the model call fails.
+    const result = await runWithAiReservation(
+      quotaCheck,
+      () => engine.callCopilotRouter(systemPrompt, userPrompt),
+      (r) => ({ tokensIn: r.usage?.inputTokens, tokensOut: r.usage?.outputTokens }),
+    )
     // The provider may return a string OR a parsed object depending on
     // the response format. Handle both.
     let raw: string

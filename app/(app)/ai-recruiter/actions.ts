@@ -19,7 +19,7 @@ import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
-import { enforceAiQuota, recordAiUsage, recordAiFailure } from '@/lib/ai/quota'
+import { enforceAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import { AIEngineError, ProviderNotConfiguredError } from '@/lib/ai/errors/ai-engine-error'
 import type {
   EmploymentType,
@@ -87,13 +87,12 @@ export async function generateJobDescriptionAction(
     }
 
     const engine = getAIEngine()
-    const result = await engine.generateJobDescription(input)
-    await recordAiUsage({
-      organizationId: orgId,
-      feature: 'job_description',
-      tokensIn: result.usage.inputTokens,
-      tokensOut: result.usage.outputTokens,
-    })
+    // Finalizes the quota reservation on success, releases it on any throw.
+    const result = await runWithAiReservation(
+      quota,
+      () => engine.generateJobDescription(input),
+      (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }),
+    )
 
     // Persist the AITask so the wizard run is attributable + auditable.
     const aiTask = await db.aITask.create({
