@@ -46,29 +46,54 @@ export interface IcsEventInput {
 }
 
 function escapeIcsText(s: string): string {
-  // RFC 5545 §3.3.11: backslash, comma, semicolon, newline.
+  // RFC 5545 §3.3.11: escape backslash, comma, semicolon, and newline.
+  // Every flavour of line break (CRLF, lone CR, lone LF) collapses to the
+  // literal "\n" escape so a value can never inject a new content line.
   return s
     .replace(/\\/g, '\\\\')
-    .replace(/\n/g, '\\n')
+    .replace(/\r\n|\r|\n/g, '\\n')
     .replace(/,/g, '\\,')
     .replace(/;/g, '\\;')
 }
 
+/**
+ * Strip anything that could break the line structure out of a value that
+ * is emitted WITHOUT text escaping (URI values, mailto: addresses).
+ * Removes CR, LF, NUL and other C0 control characters.
+ */
+function stripIcsControlChars(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u0000-\u001F\u007F]/g, '')
+}
+
+const ICS_MAX_OCTETS = 75 // RFC 5545 §3.1: lines are limited to 75 octets, excluding CRLF.
+const icsTextEncoder = new TextEncoder()
+
 function foldLine(line: string): string {
-  // Fold at 73 octets per line; we approximate by character count
-  // (UTF-8 could push over, but for short fields this is safe).
-  if (line.length <= 73) return line
+  // RFC 5545 §3.1: fold so no content line exceeds 75 octets (excluding
+  // CRLF); continuation lines begin with a single space. We iterate by
+  // Unicode code point so a multi-byte UTF-8 sequence is never split, and
+  // we count real UTF-8 octets rather than UTF-16 code units.
+  if (icsTextEncoder.encode(line).length <= ICS_MAX_OCTETS) return line
   const out: string[] = []
-  let i = 0
-  while (i < line.length) {
-    if (i === 0) {
-      out.push(line.slice(0, 73))
-      i = 73
+  let cur = ''
+  let curOctets = 0
+  let isFirst = true
+  for (const ch of line) {
+    const chOctets = icsTextEncoder.encode(ch).length
+    // Continuation lines spend one octet on the leading space.
+    const limit = isFirst ? ICS_MAX_OCTETS : ICS_MAX_OCTETS - 1
+    if (curOctets + chOctets > limit && cur.length > 0) {
+      out.push(isFirst ? cur : ' ' + cur)
+      isFirst = false
+      cur = ch
+      curOctets = chOctets
     } else {
-      out.push(' ' + line.slice(i, i + 72))
-      i += 72
+      cur += ch
+      curOctets += chOctets
     }
   }
+  out.push(isFirst ? cur : ' ' + cur)
   return out.join('\r\n')
 }
 
@@ -90,12 +115,12 @@ function toIcsDate(iso: string): string {
 
 function escapeIcsParamValue(s: string): string {
   // §3.1.1: in parameter values, also escape colon and double-quote.
-  return s
+  // Drop every control char (incl. lone CR) so a CN= name can't inject.
+  return stripIcsControlChars(s)
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
     .replace(/;/g, '\\;')
     .replace(/:/g, '\\:')
-    .replace(/\r?\n/g, '')
 }
 
 export function buildIcsEvent(input: IcsEventInput): string {
@@ -125,17 +150,20 @@ export function buildIcsEvent(input: IcsEventInput): string {
     out.push(foldLine(`LOCATION:${escapeIcsText(input.location)}`))
   }
   if (input.url) {
-    out.push(foldLine(`URL:${input.url}`))
+    // URI value type (§3.3.13): not text-escaped, but must never contain
+    // CR/LF/control chars that would break the line structure.
+    const safeUrl = stripIcsControlChars(input.url)
+    if (safeUrl) out.push(foldLine(`URL:${safeUrl}`))
   }
   out.push(foldLine(`STATUS:${input.status ?? 'CONFIRMED'}`))
   if (input.organizer) {
     const name = input.organizer.name ? `;CN=${escapeIcsParamValue(input.organizer.name)}` : ''
-    out.push(foldLine(`ORGANIZER${name}:mailto:${input.organizer.email}`))
+    out.push(foldLine(`ORGANIZER${name}:mailto:${stripIcsControlChars(input.organizer.email)}`))
   }
   if (input.attendees) {
     for (const a of input.attendees) {
       const name = a.name ? `;CN=${escapeIcsParamValue(a.name)}` : ''
-      out.push(foldLine(`ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE${name}:mailto:${a.email}`))
+      out.push(foldLine(`ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE${name}:mailto:${stripIcsControlChars(a.email)}`))
     }
   }
   out.push('END:VEVENT')

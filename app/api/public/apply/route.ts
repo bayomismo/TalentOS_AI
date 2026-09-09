@@ -8,11 +8,25 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { submitPublicApplicationAction } from '@/app/(public)/jobs/[slug]/apply-action'
+import { MAX_CV_BASE64_CHARS } from '@/app/(public)/jobs/[slug]/apply-schema'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+// Largest body we will read into memory. Comfortably covers a max-size
+// base64 CV plus every other field; anything bigger is rejected before
+// `req.json()` buffers it.
+const MAX_BODY_BYTES = MAX_CV_BASE64_CHARS + 256 * 1024
+
 export async function POST(req: NextRequest) {
+  const declaredLength = Number(req.headers.get('content-length') ?? '')
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { ok: false, error: { code: 'CV_TOO_LARGE', message: 'Your application is too large. Please reduce the CV file size.' } },
+      { status: 413 },
+    )
+  }
+
   let body: Record<string, unknown> = {}
   try {
     body = await req.json()
@@ -29,10 +43,8 @@ export async function POST(req: NextRequest) {
     null
   const userAgent = req.headers.get('user-agent')
 
-  const result = await submitPublicApplicationAction(
-    body as Parameters<typeof submitPublicApplicationAction>[0],
-    { ip, userAgent },
-  )
+  // The action validates `body` structurally (zod) before using it.
+  const result = await submitPublicApplicationAction(body, { ip, userAgent })
 
   if (result.ok) {
     return NextResponse.json({ ok: true, candidateId: result.candidateId })

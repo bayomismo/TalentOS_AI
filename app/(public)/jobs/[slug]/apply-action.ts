@@ -31,28 +31,12 @@
 import 'server-only'
 import { db } from '@/lib/db'
 import { rateLimit } from '@/lib/auth/rate-limit'
-import { parseCV, validateAndClassify, MAX_CV_BYTES, CVParseError, CVValidationError } from '@/lib/cv'
+import { parseCV, MAX_CV_BYTES, CVParseError, CVValidationError } from '@/lib/cv'
 import { sendEmail } from '@/lib/email'
 import { newPublicApplicationEmail } from '@/lib/email/templates'
+import { applicationSchema, MAX_CV_BASE64_CHARS, type SubmitPublicApplicationInput } from './apply-schema'
 
-export interface SubmitPublicApplicationInput {
-  jobSlug: string
-  firstName: string
-  lastName: string
-  email: string
-  phone?: string | null
-  location?: string | null
-  linkedinUrl?: string | null
-  portfolioUrl?: string | null
-  githubUrl?: string | null
-  coverLetter?: string | null
-  /** Optional CV — base64-encoded bytes + filename + mime type. */
-  cv?: { dataBase64: string; fileName: string; mimeType: string } | null
-  /** Honeypot — if filled, it's a bot. Must always be empty. */
-  website?: string
-  /** For consent checkbox. Must be exactly "on". */
-  consent?: string
-}
+export type { SubmitPublicApplicationInput }
 
 export type SubmitPublicApplicationResult =
   | { ok: true; candidateId: string }
@@ -84,9 +68,20 @@ const IP_RATE_LIMIT = 5
 const IP_RATE_WINDOW_SEC = 60 * 60 // 1 hour
 
 export async function submitPublicApplicationAction(
-  input: SubmitPublicApplicationInput,
+  rawInput: unknown,
   meta: { ip: string | null; userAgent: string | null },
 ): Promise<SubmitPublicApplicationResult> {
+  // 0. Structural validation — reject malformed bodies before any work.
+  const parsed = applicationSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      message: 'Some of the details submitted were not in the expected format. Please check the form and try again.',
+    }
+  }
+  const input = parsed.data
+
   // 1. Honeypot — bots fill all fields, including hidden ones.
   if (input.website && input.website.length > 0) {
     // Silently return success to avoid teaching the bot anything.
@@ -170,8 +165,17 @@ export async function submitPublicApplicationAction(
   }
 
   // 6. Optional CV — parse to text
-  let parsedCV: { text: string; fileName: string; fileSize: number; mimeType: string; fileKind: 'PDF' | 'DOCX' | 'TEXT' } | null = null
+  let parsedCV: { text: string; fileName: string; fileSize: number; mimeType: string; fileKind: 'PDF' | 'DOCX' } | null = null
   if (input.cv && input.cv.dataBase64) {
+    // Reject oversized payloads BEFORE decoding — `Buffer.from` on a huge
+    // base64 string would allocate the decoded bytes in memory first.
+    if (input.cv.dataBase64.length > MAX_CV_BASE64_CHARS) {
+      return {
+        ok: false,
+        code: 'CV_TOO_LARGE',
+        message: `CV is too large. Maximum size is ${Math.round(MAX_CV_BYTES / 1024 / 1024)}MB.`,
+      }
+    }
     try {
       const buffer = Buffer.from(input.cv.dataBase64, 'base64')
       if (buffer.length > MAX_CV_BYTES) {
@@ -204,60 +208,66 @@ export async function submitPublicApplicationAction(
   }
 
   // 7. Find or create the candidate
-  // Strategy: one Candidate per (organizationId, email) per (hiringRequestId).
-  // If the same person applies to the same job twice, update the existing row.
-  // If they apply to a different job, create a new Candidate row.
-  const existing = await db.candidate.findFirst({
-    where: {
+  // One Candidate per (organizationId, email, hiringRequestId). A repeat
+  // application to the same job (double submit, or two concurrent
+  // requests) updates the existing row instead of creating a duplicate
+  // or 500ing.
+  //
+  // Prisma normally compiles this upsert to `INSERT ... ON CONFLICT DO
+  // UPDATE` on the `@@unique([organizationId, email, hiringRequestId])`
+  // constraint. If it falls back to emulated find-then-write, a
+  // concurrent first-time insert can still raise P2002 — the catch
+  // below turns that race into the intended update.
+  const source = `Public: ${job.title}`
+  const sourceDetails = `Applied via /jobs/${input.jobSlug}${meta.ip ? ` from ${meta.ip}` : ''}`
+
+  const uniqueWhere = {
+    organizationId_email_hiringRequestId: {
       organizationId: job.organizationId,
       email,
       hiringRequestId: hiringRequest.id,
     },
-    select: { id: true },
-  })
+  }
+  const commonData = {
+    firstName,
+    lastName,
+    phone,
+    location,
+    linkedinUrl,
+    portfolioUrl,
+    githubUrl,
+    source,
+    sourceDetails,
+    stage: 'APPLIED' as const,
+    status: 'ACTIVE' as const,
+  }
+  // On update, don't clear an existing summary when this submit has no
+  // cover letter; on create, store it as-is (may be null).
+  const updateData = { ...commonData, summary: coverLetter ?? undefined }
+  const createData = {
+    ...commonData,
+    organizationId: job.organizationId,
+    hiringRequestId: hiringRequest.id,
+    email,
+    summary: coverLetter,
+  }
+  const candidateSelect = { id: true, firstName: true, lastName: true, email: true }
 
-  const source = `Public: ${job.title}`
-  const sourceDetails = `Applied via /jobs/${input.jobSlug}${meta.ip ? ` from ${meta.ip}` : ''}`
-
-  const candidate = existing
-    ? await db.candidate.update({
-        where: { id: existing.id },
-        data: {
-          firstName,
-          lastName,
-          phone,
-          location,
-          linkedinUrl,
-          portfolioUrl,
-          githubUrl,
-          summary: coverLetter ?? undefined,
-          source,
-          sourceDetails,
-          stage: 'APPLIED',
-          status: 'ACTIVE',
-        },
-        select: { id: true, firstName: true, lastName: true, email: true },
-      })
-    : await db.candidate.create({
-        data: {
-          organizationId: job.organizationId,
-          hiringRequestId: hiringRequest.id,
-          firstName,
-          lastName,
-          email,
-          phone,
-          location,
-          linkedinUrl,
-          portfolioUrl,
-          githubUrl,
-          summary: coverLetter,
-          source,
-          sourceDetails,
-          stage: 'APPLIED',
-          status: 'ACTIVE',
-        },
-        select: { id: true, firstName: true, lastName: true, email: true },
-      })
+  let candidate
+  try {
+    candidate = await db.candidate.upsert({
+      where: uniqueWhere,
+      update: updateData,
+      create: createData,
+      select: candidateSelect,
+    })
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'P2002') {
+      candidate = await db.candidate.update({ where: uniqueWhere, data: updateData, select: candidateSelect })
+    } else {
+      throw err
+    }
+  }
 
   // 8. Persist the CV if provided (parsed text only, not the file)
   if (parsedCV) {

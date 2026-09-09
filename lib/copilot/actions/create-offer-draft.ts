@@ -143,8 +143,10 @@ async function resolveCandidateForOffer(ctx: CopilotAuthContext, ref: string): P
   if (!cand) return { code: 'RESOURCE_NOT_FOUND', message: `Could not resolve candidate "${trimmed}".` }
 
   // Sprint 10 rule: candidate must be SELECTED
+  // (candidateId/hiringRequestId are already org-owned via `cand`, but scope
+  // explicitly per the assertSameOrg doctrine — defense in depth, no behaviour change.)
   const decision = await db.candidateDecision.findFirst({
-    where: { candidateId: cand.id, hiringRequestId: cand.hiringRequestId, decision: 'SELECTED' as never },
+    where: { organizationId: ctx.organizationId, candidateId: cand.id, hiringRequestId: cand.hiringRequestId, decision: 'SELECTED' as never },
     orderBy: { decidedAt: 'desc' },
   })
   if (!decision) {
@@ -154,6 +156,7 @@ async function resolveCandidateForOffer(ctx: CopilotAuthContext, ref: string): P
   // Sprint 10 rule: no duplicate active offer
   const activeOffer = await db.offer.findFirst({
     where: {
+      organizationId: ctx.organizationId,
       candidateId: cand.id,
       hiringRequestId: cand.hiringRequestId,
       status: { in: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'ISSUED', 'ACCEPTED'] as never[] },

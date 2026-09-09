@@ -378,8 +378,25 @@ async function handleReadQuery(
   // Sprint 16 — per-org AI quota. Refuse if over limit.
   const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
   if (!quotaCheck.allowed) {
+    // Return a well-formed read_response so the UI renders the limit
+    // message. (Previously this returned a shape with no `ok`/`outcome`,
+    // which the copilot page could not render.)
     return {
-      answer: quotaCheck.message ?? 'AI limit reached for this month.',
+      ok: true,
+      outcome: {
+        kind: 'read_response',
+        response: {
+          answer: quotaCheck.message ?? 'AI limit reached for this month.',
+          findings: [],
+          records: [],
+          suggestedQuestions: [],
+          limitations: [
+            'AI monthly limit reached. The limit resets on ' +
+              quotaCheck.resetAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+              '.',
+          ],
+        },
+      },
       toolIds: [],
       durationMs: Date.now() - start,
     }
@@ -505,8 +522,9 @@ Do not wrap in markdown. Emit JSON only.`
     // Sprint 16 — per-org AI quota. Refuse if over limit.
     const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
     if (!quotaCheck.allowed) {
+      // Match this function's declared result shape ({ ok: false; message }).
       return {
-        outcome: 'failed',
+        ok: false,
         message: quotaCheck.message ?? 'AI limit reached for this month.',
       }
     }
