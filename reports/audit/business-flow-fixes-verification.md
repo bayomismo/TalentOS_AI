@@ -285,36 +285,63 @@ deploys recorded. The four remediation commits were rebased with `--reset-author
   encrypted integrations cannot be read and Google sign-in is unavailable. `AUTH_SECRET` is present
   and covers `NEXTAUTH_SECRET`.
 
-### Still outstanding: the GitHub push
+### Pushed — and the merge that came with it
 
-The work is deployed and live, but **it is not yet on GitHub** — the repository history is only
-local. The replacement fine-grained PAT authenticates as `bayomismo` but is scoped to
-`bayomismo/orvix`, `bayomismo/POP_CHAT` and `bayomismo/POP_HUB`:
+Pushing revealed something important: **the remote `main` had five commits this branch had never
+seen**, and they were *already deployed* (sha `97077ec`):
 
-| Check | Result |
-|---|---|
-| `GET /repos/bayomismo/TalentOS_AI` | **404** — the repo is not in the token's repository selection |
-| `git push origin main` | **403 — "Write access to repository not granted"** |
-
-The repository is real and private (`git ls-remote` has `origin/main` at `93b0e99`; unauthenticated
-requests 404). The fix is in the token's settings, not a new token:
-
-> Settings → Developer settings → Personal access tokens → fine-grained tokens → your token →
-> **Repositories → add `TalentOS_AI`**, and under **Permissions** set **Contents: Read and write**.
-
-Or issue a classic PAT with the `repo` scope, which covers every private repository on the account.
-Once pushed, the Vercel GitHub integration will deploy it automatically — that path needs no Vercel
-token at all.
-
-### Commands for the remaining step
-
-```bash
-cd /workspace/TalentOS_AI
-git push origin main        # commit 84b8dc7 — once the PAT can see the repo
+```
+97077ec | feat: add atomic AI quota reservations
+d0de054 | Harden public apply, ICS generation, and Copilot quota/scoping
+7ad8d4c | Fix tenant isolation and distributed rate limiting
+ec778ec | Merge GitHub main with local project snapshot
+75bc10e | Local snapshot before connecting to GitHub
 ```
 
-The database is already migrated (both additive migrations applied, `prisma migrate status` reports
-*"Database schema is up to date!"*), so neither path needs a migration step.
+Merging was not optional — pushing without them would have reverted Sprint 19 in production. Six
+files conflicted, and every resolution keeps **both** sides' intent:
+
+| File | Resolution |
+|---|---|
+| `app/api/candidate-name/[id]/route.ts` | Sprint 19 scoped the lookup to the caller's org; the audit added `requirePermission('candidate.view')`. The permission gate is strictly stronger than a session check, so it stays |
+| `app/(public)/jobs/[slug]/apply-action.ts` | The audit's version keeps the deterministic requisition, the consent record, the `Application` entity and "a public application NEVER mutates an existing candidate". Sprint 19's zod shape gate and the `MAX_CV_BASE64_CHARS` ceiling (rejects an oversized payload *before* `Buffer.from` materialises it) are folded in |
+| `app/api/public/apply/route.ts` | The server-derived client IP stays (audit P2-08); Sprint 19's content-length pre-check is added on top |
+| `features/decisions/services/decision-brief-service.ts` | The atomic `runWithAiReservation` replaces the old `recordAiUsage` call; the error classes carrying `result.error.details` are kept |
+| `lib/copilot/orchestration/orchestrator.ts` | Sprint 19 rewrote the read flow around ONE authoritative quota reservation. The audit's change here was a type fix, and the rewrite already returns the correct shape, so it supersedes it |
+| `.gitignore` | Keeps both the `.storage/` rule and `.gstack/` |
+
+**One API change needed propagating:** Sprint 19 made `rateLimit` asynchronous (it now does an
+atomic upsert into `RateLimitHit`), so four call sites that were still calling it synchronously
+now await it — three in the public-apply action and one in `lib/auth/invitation.ts`.
+
+**One real defect the merge surfaced.** Sprint 19's zod gate was being *bypassed* on the API path:
+the route narrows the body with `toSubmitInput` first, and that coercion turns a malformed field
+into an empty string — so `{firstName: 123}` arrived at the action as `{firstName: ''}`,
+well-formed, and therefore past a gate that ran after the narrowing. A malformed body was being
+silently coerced into a submission with empty fields instead of being rejected. The gate now runs on
+the **raw** body, before the narrowing, and the action keeps its own gate for the direct
+server-action path. Verified in production: a well-formed body reaches the business logic
+(`JOB_NOT_FOUND`), a wrong-typed field is refused (`INVALID_INPUT`).
+
+The merged schema carries both models — `Application` from the audit and `RateLimitHit` from
+Sprint 19 — and `prisma migrate status` reports **"Database schema is up to date!"** (17
+migrations, all applied, nothing left to run).
+
+### Final state
+
+| | |
+|---|---|
+| GitHub `main` | `b7934bd` — pushed, fast-forward, **nothing force-pushed** |
+| Production | `https://talentos-ai-lime.vercel.app`, deployment `talentos-75tcx5zqm-bayomismo`, **READY**, sha `b7934bd` |
+| Deploy path | The Vercel project is GitHub-connected to `bayomismo/TalentOS_AI` on `main` with a deploy hook — **the push triggered the deploy automatically**; no Vercel token was needed for it |
+
+Every gate re-ran green on the merged code: `tsc` 0 · audit-6 **56/0** · audit-7 **740/0** ·
+audit-5 **27/0** · audit-4 **21/0** · audit-3 0 bypasses · audit-2/1 clean ·
+test-sprint19-quota **23/0** · test-sprint19-hardening **35/0** · test-ai-transient-retry **16/0** ·
+offer harness **45/0** · e2e **26/0** (all 14 steps) · `next build` compiles with type checking ON.
+
+Database unchanged: 127 orgs · 139 users · 34 candidates · 30 hiring requests · 7 offers ·
+Application 0 · 9 decisions · 6 interviews.
 
 ---
 
