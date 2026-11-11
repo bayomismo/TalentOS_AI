@@ -41,6 +41,7 @@ import { getFileStorage } from '@/lib/storage'
 import { resolvePublicRequisition, isAcceptingPublicState } from '@/app/(public)/_lib/public-requisition'
 import { publicConsentText } from '@/app/(public)/_lib/consent'
 import { absoluteUrl } from '@/app/(public)/_lib/origin'
+import { applicationSchema, MAX_CV_BASE64_CHARS } from './apply-schema'
 
 export interface SubmitPublicApplicationInput {
   jobSlug: string
@@ -149,6 +150,22 @@ export async function submitPublicApplicationAction(
   input: SubmitPublicApplicationInput,
   meta: { ip: string | null; userAgent: string | null },
 ): Promise<SubmitPublicApplicationResult> {
+  // 0. Structural gate — reject a malformed body before ANY work.
+  //
+  //    This is a shape + gross-size check only (an abuse ceiling, not a
+  //    UX limit): it stops a hostile body from reaching the rate limiter,
+  //    the database or the CV parser. The user-friendly per-field checks
+  //    below still run and return their own error codes.
+  const shape = applicationSchema.safeParse(input)
+  if (!shape.success) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      message:
+        'Some of the details submitted were not in the expected format. Please check the form and try again.',
+    }
+  }
+
   // 1. Honeypot — bots fill all fields, including hidden ones.
   if (input.website && input.website.length > 0) {
     // Silently return success to avoid teaching the bot anything.
@@ -164,7 +181,7 @@ export async function submitPublicApplicationAction(
   // 2. Attempt bucket — charged for EVERY request, before any database
   //    work, so the endpoint cannot be used to hammer the product.
   const ip = meta.ip ?? 'unknown'
-  const attempt = rateLimit(`public-apply-attempt:${ip}`, IP_ATTEMPT_LIMIT, RATE_WINDOW_SEC)
+  const attempt = await rateLimit(`public-apply-attempt:${ip}`, IP_ATTEMPT_LIMIT, RATE_WINDOW_SEC)
   if (!attempt.ok) {
     return {
       ok: false,
@@ -246,7 +263,7 @@ export async function submitPublicApplicationAction(
 
   // 6. The applicant's own limits. Charged only now — after the input is
   //    known to be well-formed — so a typo no longer burns the quota.
-  const ipBucket = rateLimit(`public-apply:${ip}`, IP_RATE_LIMIT, RATE_WINDOW_SEC)
+  const ipBucket = await rateLimit(`public-apply:${ip}`, IP_RATE_LIMIT, RATE_WINDOW_SEC)
   if (!ipBucket.ok) {
     return {
       ok: false,
@@ -256,7 +273,7 @@ export async function submitPublicApplicationAction(
       )} minutes.`,
     }
   }
-  const emailBucket = rateLimit(`public-apply:email:${email}`, EMAIL_RATE_LIMIT, RATE_WINDOW_SEC)
+  const emailBucket = await rateLimit(`public-apply:email:${email}`, EMAIL_RATE_LIMIT, RATE_WINDOW_SEC)
   if (!emailBucket.ok) {
     return {
       ok: false,
@@ -276,6 +293,19 @@ export async function submitPublicApplicationAction(
     buffer: Buffer
   } | null = null
   if (input.cv && input.cv.dataBase64) {
+    // Reject an oversized base64 payload BEFORE decoding it. The
+    // functional `MAX_CV_BYTES` check below only sees the decoded bytes,
+    // and `Buffer.from` would already have materialised them — so a
+    // 20 MB body of base64 would be decoded into memory first. This is
+    // the exact base64 expansion of MAX_CV_BYTES, so anything longer
+    // cannot possibly decode to an acceptable file.
+    if (input.cv.dataBase64.length > MAX_CV_BASE64_CHARS) {
+      return {
+        ok: false,
+        code: 'CV_TOO_LARGE',
+        message: `CV is too large. Maximum size is ${Math.round(MAX_CV_BYTES / 1024 / 1024)}MB.`,
+      }
+    }
     try {
       const buffer = Buffer.from(input.cv.dataBase64, 'base64')
       if (buffer.length > MAX_CV_BYTES) {

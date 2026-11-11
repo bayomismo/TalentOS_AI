@@ -24,3 +24,5 @@ node_modules
 
 # Durable file storage (CV originals) — runtime data, never committed
 .storage/
+
+.gstack/

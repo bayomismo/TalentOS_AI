@@ -15,7 +15,7 @@
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
-import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { enforceAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import { getEventBus } from '@/lib/events'
 import { ApplicationStage } from '@prisma/client'
 import { transitionCandidateStage } from '@/lib/candidates/transition'
@@ -190,13 +190,11 @@ export async function generateInterviewKitService(
       }
     }
 
-    const result = await getAIEngine().generateInterviewKit(engineInput)
-    await recordAiUsage({
-      organizationId: candidate.organizationId,
-      feature: 'interview_kit',
-      tokensIn: result.usage.inputTokens,
-      tokensOut: result.usage.outputTokens,
-    })
+    const result = await runWithAiReservation(
+      quotaCheck,
+      () => getAIEngine().generateInterviewKit(engineInput),
+      (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }),
+    )
     const kit: InterviewKitOutput = result.data
     // Defensive defaults: the model sometimes forgets to copy the candidate
     // name / position from the prompt. We fill them in from the DB so the

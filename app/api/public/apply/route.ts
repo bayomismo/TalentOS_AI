@@ -17,6 +17,7 @@ import {
   submitPublicApplicationAction,
   type SubmitPublicApplicationInput,
 } from '@/app/(public)/jobs/[slug]/apply-action'
+import { MAX_CV_BASE64_CHARS } from '@/app/(public)/jobs/[slug]/apply-schema'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -100,7 +101,28 @@ function toSubmitInput(raw: Record<string, unknown>): SubmitPublicApplicationInp
   }
 }
 
+// Largest body we will read into memory. Comfortably covers a max-size
+// base64 CV plus every other field; anything bigger is rejected before
+// `req.json()` buffers it.
+const MAX_BODY_BYTES = MAX_CV_BASE64_CHARS + 256 * 1024
+
 export async function POST(req: NextRequest) {
+  // Reject an oversized body on the declared content-length, before
+  // `req.json()` buffers it into memory.
+  const declaredLength = Number(req.headers.get('content-length') ?? '')
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: 'CV_TOO_LARGE',
+          message: 'Your application is too large. Please reduce the CV file size.',
+        },
+      },
+      { status: 413 },
+    )
+  }
+
   let parsedBody: unknown
   try {
     parsedBody = await req.json()
@@ -121,6 +143,8 @@ export async function POST(req: NextRequest) {
   const ip = serverDerivedClientIp(req)
   const userAgent = req.headers.get('user-agent')
 
+  // The body is narrowed into the action's input shape here, and the
+  // action validates it structurally (zod) before using it.
   const result = await submitPublicApplicationAction(
     toSubmitInput(parsedBody as Record<string, unknown>),
     { ip, userAgent },

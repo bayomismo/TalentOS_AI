@@ -12,7 +12,7 @@
 
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
-import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { enforceAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import { AIEngineError, SchemaValidationError } from '@/lib/ai/errors/ai-engine-error'
 import { getEventBus } from '@/lib/events'
 import {
@@ -194,13 +194,11 @@ export async function generateDecisionBriefService(input: {
       }
     }
 
-    const engineResult = await getAIEngine().generateDecisionBrief(engineInput)
-    await recordAiUsage({
-      organizationId: hr.organizationId,
-      feature: 'decision_brief',
-      tokensIn: engineResult.usage.inputTokens,
-      tokensOut: engineResult.usage.outputTokens,
-    })
+    const engineResult = await runWithAiReservation(
+      quotaCheck,
+      () => getAIEngine().generateDecisionBrief(engineInput),
+      (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }),
+    )
     const output = engineResult.data
     const task = await persistDecisionBriefTask({
       organizationId: hr.organizationId,

@@ -5,12 +5,21 @@
  * and current stage. Used by the Interview Kit page to render the
  * header before the full kit is loaded.
  *
- * Access control (audit D5 — a cross-tenant read found during the
- * business-flow remediation):
- *   - the caller must be authenticated and hold `candidate.view`,
- *   - the candidate is looked up through the caller's organization
- *     (a foreign-key filter on the candidate's own `organizationId`),
- *     so a candidate belonging to another tenant is not found.
+ * Access control — this route was hardened twice, independently, and the
+ * two fixes are cumulative rather than competing:
+ *
+ *   - Tenant isolation (Sprint 19): the candidate lookup is scoped to the
+ *     caller's organization through a foreign-key filter on the
+ *     candidate's own `organizationId`, so a candidate belonging to
+ *     another tenant is not found. Middleware only checks for the
+ *     *presence* of a session cookie, so this route must do its own
+ *     identity + tenant check (see lib/auth/authorize.ts).
+ *
+ *   - Permission gate (audit D5, a cross-tenant read found during the
+ *     business-flow remediation): the caller must additionally hold
+ *     `candidate.view`. A valid session is not enough — a user whose
+ *     role lacks the permission must not read candidate records, even
+ *     inside their own organization.
  *
  * The route answers 404 rather than 403 for a foreign candidate, so it
  * does not disclose that the candidate exists elsewhere.

@@ -79,7 +79,7 @@ import {
   unsupportedPeriodMessage,
 } from '@/lib/offers/compensation'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
-import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { enforceAiQuota, runWithAiReservation } from '@/lib/ai/quota'
 import {
   buildOfferLetterUserPrompt,
   offerLetterPrompt,
@@ -877,13 +877,13 @@ export async function generateOfferDraft(
     }
 
     const engine = getAIEngine()
-    const result = await engine.generateOfferLetter(facts)
-    await recordAiUsage({
-      organizationId: ctx.organizationId,
-      feature: 'offer_letter',
-      tokensIn: result.usage.inputTokens,
-      tokensOut: result.usage.outputTokens,
-    })
+    // Finalizes the reservation on success; releases it (then rethrows into
+    // the catch below) on any engine failure.
+    const result = await runWithAiReservation(
+      quotaCheck,
+      () => engine.generateOfferLetter(facts),
+      (r) => ({ tokensIn: r.usage.inputTokens, tokensOut: r.usage.outputTokens }),
+    )
     draft = result.data
     modelUsed = result.model
     await db.aITask.update({

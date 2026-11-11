@@ -244,7 +244,7 @@ export async function acceptInvitation(input: {
   // The token is a bearer credential: limit how often it can be tried.
   // See the mailbox-ownership limitation documented at the top of this
   // file — compensating controls are listed there.
-  const acceptLimit = rateLimit(
+  const acceptLimit = await rateLimit(
     `accept-invite:${hashToken(input.token).slice(0, 32)}`,
     10,
     15 * 60,

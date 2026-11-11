@@ -13,6 +13,7 @@ import { executeTool, getRegisteredToolIds } from '../read-tools/registry'
 import { generateCopilotResponse, type CopilotResponse } from './response'
 import type { CopilotAuthContext } from '../types'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
+import { releaseAiQuota } from '@/lib/ai/quota'
 
 const ToolSelectionSchema = z.object({
   tools: z.array(z.object({
@@ -126,13 +127,16 @@ export async function runReadToolsAndGenerateResponse(args: {
   userMessage: string
   toolCalls: Array<{ toolId: string; arguments: Record<string, unknown> }>
   history?: Array<{ role: 'USER' | 'ASSISTANT'; content: string }>
+  /** Sprint 19 — the quota reservation opened by handleReadQuery, passed
+   *  through to generateCopilotResponse to finalize or release. */
+  usageId?: string
 }): Promise<{
   taskId: string
   response: CopilotResponse
   toolIds: string[]
   modelUsed?: string
 }> {
-  const { ctx, userMessage, toolCalls, history } = args
+  const { ctx, userMessage, toolCalls, history, usageId } = args
   const toolResults: Array<{ toolId: string; data: unknown; recordHrefs: string[] }> = []
   const executedToolIds: string[] = []
 
@@ -155,6 +159,8 @@ export async function runReadToolsAndGenerateResponse(args: {
         reason: 'missing_permission',
         metadata: { toolId: call.toolId },
       })
+      // Never reached generateCopilotResponse — release the query's reservation.
+      await releaseAiQuota(usageId)
       return {
         taskId: '',
         toolIds: executedToolIds,
@@ -204,6 +210,7 @@ export async function runReadToolsAndGenerateResponse(args: {
       toolResults,
       history,
       organizationId: ctx.organizationId,
+      usageId,
     })
     modelUsed = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'
   } catch (err) {

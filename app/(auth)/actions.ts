@@ -68,7 +68,7 @@ export async function requestPasswordResetAction(
   const { email, requestIp, requestUserAgent } = parsed.data
 
   // Rate limit: 5 reset requests per email per 10 minutes.
-  const rl = rateLimit(`password_reset:${email}`, 5, 10 * 60)
+  const rl = await rateLimit(`password_reset:${email}`, 5, 10 * 60)
   if (!rl.ok) {
     // Don't tell the caller they're rate-limited — return ok so we
     // don't leak which emails have accounts. But still don't send.
