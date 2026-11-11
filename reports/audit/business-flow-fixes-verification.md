@@ -234,7 +234,48 @@ codes).
 
 ---
 
-## 7. Deliverables
+## 7. Deployment status
+
+**The work is committed locally as `200faa0` on `main`, but it is NOT pushed and NOT deployed.**
+
+Both credentials in the sandbox expired:
+
+| Credential | State | Symptom |
+|---|---|---|
+| `GITHUB_TOKEN` (and the token embedded in the `origin` remote URL) | expired / revoked | `401 Bad credentials` from the GitHub API; `git push` → *"Invalid username or token"* |
+| `VERCEL_TOKEN` | invalid | `v2/user` → `{"code":"forbidden","invalidToken":true}`; `vercel whoami` → *"The token provided via VERCEL_TOKEN environment variable is not valid"* |
+
+No alternate credential path exists in this environment: no `gh` CLI, no SSH key, no
+`~/.git-credentials`, no second remote. Both the push and the deploy therefore need a
+refreshed token — nothing in the code is blocking them.
+
+To finish, with a valid `GITHUB_TOKEN` and `VERCEL_TOKEN`:
+
+```bash
+cd /workspace/TalentOS_AI
+git push origin main                                    # commit 200faa0
+npx vercel --prod --yes --token "$VERCEL_TOKEN"          # or let the GitHub push auto-deploy
+```
+
+The database is already migrated — both additive migrations are applied and
+`prisma migrate status` reports *"Database schema is up to date!"* — so a deploy needs
+no migration step.
+
+### Environment variables the production instance still needs
+
+| Variable | Consequence if missing |
+|---|---|
+| `CRON_SECRET` | The interview-reminder and offer-expiry crons return 500 **and fail closed** — no unauthenticated access, but no automation either |
+| `RESEND_API_KEY` | No email is delivered. Sends are recorded in the outbox with provider, status and failure reason, and every user-facing promise is conditional on delivery being configured |
+| `INTEGRATION_ENCRYPTION_KEY` | Encrypted integrations cannot be read |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google sign-in is unavailable |
+
+`GEMINI_API_KEY`, `AI_PROVIDER`, `GEMINI_MODEL`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
+`DATABASE_URL` and `APP_URL` are already set.
+
+---
+
+## 8. Deliverables
 
 | File | What it is |
 |---|---|
