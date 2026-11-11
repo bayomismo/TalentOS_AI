@@ -310,7 +310,7 @@ token at all.
 
 ```bash
 cd /workspace/TalentOS_AI
-git push origin main        # commit 152abb8 — once the PAT can see the repo
+git push origin main        # commit 84b8dc7 — once the PAT can see the repo
 ```
 
 The database is already migrated (both additive migrations applied, `prisma migrate status` reports
