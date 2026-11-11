@@ -15,13 +15,13 @@ import { transitionOnboardingStep, completeOnboarding } from './transitions'
 import { requireAuth } from '@/lib/auth/authorize'
 import { getOwnProfile, updateOwnProfile } from '@/lib/profile/service'
 import { getOwnOrganization, updateOwnOrganization } from '@/lib/organization/service'
-import { revalidatePath } from 'next/cache'
+import { safeRevalidate } from '@/lib/utils/revalidate'
 import { signIn } from '@/lib/auth/auth'
 import { db } from '@/lib/db'
 import { recordAuditLog } from '@/lib/auth/audit'
-import { hashToken } from '@/lib/auth/invitation'
-import { buildAcceptInviteUrl } from '@/lib/url/canonical'
+import { createInvitation } from '@/lib/auth/invitation'
 import { rateLimit } from '@/lib/auth/rate-limit'
+import { missingCompanyFields } from './transitions'
 
 // -----------------------------------------------------------------------------
 // Signup
@@ -95,13 +95,19 @@ export async function provisionWorkspaceAction(input: unknown): Promise<{ ok: bo
   }
   const result = await provisionWorkspace({ userId: auth.data.userId }, parsed.data)
   if (!result.ok) return { ok: false, error: { code: result.code, message: result.message } }
-  // Mark user step as ORG_CREATED
-  await transitionOnboardingStep(
+  // Mark user step as ORG_CREATED. The transition result is CHECKED:
+  // audit P1-21 found callers discarding it with `.catch(() => null)`,
+  // which never fires because the transition does not throw — the UI
+  // advanced while the stored step did not.
+  const step = await transitionOnboardingStep(
     { userId: auth.data.userId, organizationId: result.organizationId },
     'ORG_CREATED',
-  ).catch(() => null)
-  revalidatePath('/onboarding')
-  revalidatePath('/dashboard')
+  )
+  if (!step.ok) {
+    return { ok: false, error: { code: step.error?.code ?? 'INTERNAL', message: step.error?.message ?? 'Could not advance onboarding.' } }
+  }
+  safeRevalidate('/onboarding')
+  safeRevalidate('/dashboard')
   return { ok: true, organizationId: result.organizationId }
 }
 
@@ -123,16 +129,37 @@ export async function companySetupAction(input: unknown): Promise<{ ok: boolean;
   if (!parsed.success) {
     return { ok: false, error: { code: 'INVALID_INPUT', message: parsed.error.issues[0]?.message ?? 'Invalid input' } }
   }
+  // Audit P1-21: every company field was optional, so an organization
+  // could be "fully onboarded" with no country, no timezone and no
+  // industry — and interview reminders were then scheduled in the wrong
+  // timezone. The configuration is now mandatory.
+  const missing = missingCompanyFields({
+    country: parsed.data.country ?? null,
+    timezone: parsed.data.timezone ?? null,
+    industry: parsed.data.industry ?? null,
+  })
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'INCOMPLETE_COMPANY_SETUP',
+        message: `Please set ${missing.join(', ')} before continuing.`,
+      },
+    }
+  }
   const r = await updateOwnOrganization(
     { organizationId: auth.data.organizationId, userId: auth.data.userId, role: auth.data.role },
     parsed.data,
   )
   if (!r.ok) return { ok: false, error: r.error }
-  await transitionOnboardingStep(
+  const step = await transitionOnboardingStep(
     { userId: auth.data.userId, organizationId: auth.data.organizationId },
     'COMPANY_CONFIGURED',
-  ).catch(() => null)
-  revalidatePath('/onboarding')
+  )
+  if (!step.ok) {
+    return { ok: false, error: { code: step.error?.code ?? 'INTERNAL', message: step.error?.message ?? 'Could not advance onboarding.' } }
+  }
+  safeRevalidate('/onboarding')
   return { ok: true }
 }
 
@@ -150,6 +177,10 @@ const inviteTeamSchema = z.object({
 export async function inviteTeamMemberAction(input: unknown): Promise<{
   ok: boolean
   invitationUrl?: string
+  /** True when a real provider accepted the invitation email. */
+  emailDelivered?: boolean
+  /** True when email delivery is not configured at all. */
+  emailConfigured?: boolean
   error?: { code: string; message: string }
 }> {
   const auth = await requireAuth()
@@ -175,81 +206,53 @@ export async function inviteTeamMemberAction(input: unknown): Promise<{
   })
   if (pending) return { ok: false, error: { code: 'INVITATION_EXISTS', message: 'A pending invitation already exists.' } }
 
-  // Create the invitation directly
-  const token = (await import('crypto')).randomBytes(32).toString('base64url')
-  const tokenHash = hashToken(token)
-  const tokenPrefix = token.slice(0, 8)
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-  const inv = await db.invitation.create({
-    data: {
-      email: parsed.data.email.toLowerCase(),
-      organizationId: auth.data.organizationId,
-      role: parsed.data.role,
-      firstName: parsed.data.firstName,
-      lastName: parsed.data.lastName,
-      tokenHash,
-      tokenPrefix,
-      expiresAt,
-      invitedById: auth.data.userId,
-      status: 'PENDING',
-    },
+  // Create the invitation. `createInvitation` is the single place that
+  // creates an invitation AND sends the invitation email (audit P1-23),
+  // so both the onboarding path and the Settings path behave the same.
+  const created = await createInvitation({
+    organizationId: auth.data.organizationId,
+    email: parsed.data.email.toLowerCase(),
+    role: parsed.data.role,
+    invitedById: auth.data.userId,
+    firstName: parsed.data.firstName,
+    lastName: parsed.data.lastName,
   })
   await recordAuditLog({
     organizationId: auth.data.organizationId,
     actorId: auth.data.userId,
     action: 'INVITATION_SENT' as never,
     targetType: 'invitation',
-    targetId: inv.id,
+    targetId: created.invitation.id,
     outcome: 'success',
-    metadata: { email: parsed.data.email, role: parsed.data.role } as any,
+    metadata: {
+      email: parsed.data.email,
+      role: parsed.data.role,
+      // Audit P0-03: what actually happened to the email.
+      emailConfigured: created.emailConfigured,
+      emailDelivered: created.emailDelivered,
+    } as any,
   }).catch(() => null)
 
-  // Sprint 16 — also queue an invitation email via the email
-  // provider. The URL is still returned to the inviter (they can
-  // copy and paste it), but the recipient will ALSO get an email.
-  const { sendEmail } = await import('@/lib/email')
-  const { teamInvitationEmail } = await import('@/lib/email/templates')
-  const org = await db.organization.findUnique({
-    where: { id: auth.data.organizationId },
-    select: { name: true },
-  })
-  const inviter = await db.user.findUnique({
-    where: { id: auth.data.userId },
-    select: { firstName: true, lastName: true, email: true },
-  })
-  if (org && inviter) {
-    const tpl = teamInvitationEmail({
-      to: parsed.data.email,
-      inviterName: `${inviter.firstName} ${inviter.lastName}`,
-      inviterEmail: inviter.email,
-      organizationName: org.name,
-      role: parsed.data.role,
-      token,
-      message: null,
-    })
-    await sendEmail({
-      kind: 'team_invitation',
-      to: parsed.data.email,
-      from: tpl.from,
-      subject: tpl.subject,
-      text: tpl.text,
-      html: tpl.html,
-      metadata: { invitationId: inv.id },
-    }).catch(err => {
-      console.error('[onboarding] failed to queue invitation email:', err)
-    })
+  return {
+    ok: true,
+    invitationUrl: created.url,
+    emailDelivered: created.emailDelivered,
+    emailConfigured: created.emailConfigured,
   }
-
-  return { ok: true, invitationUrl: buildAcceptInviteUrl(token) }
 }
 
 export async function skipTeamInviteAction(): Promise<{ ok: boolean; error?: { code: string; message: string } }> {
   const auth = await requireAuth()
   if (!auth.ok) return { ok: false, error: { code: 'AUTH', message: 'Not signed in.' } }
-  await transitionOnboardingStep(
+  // The transition result is CHECKED, never discarded (audit P1-21).
+  const step = await transitionOnboardingStep(
     { userId: auth.data.userId, organizationId: auth.data.organizationId },
     'TEAM_INVITED',
-  ).catch(() => null)
+  )
+  if (!step.ok) {
+    return { ok: false, error: { code: step.error?.code ?? 'INTERNAL', message: step.error?.message ?? 'Could not advance onboarding.' } }
+  }
+  safeRevalidate('/onboarding')
   return { ok: true }
 }
 
@@ -258,9 +261,9 @@ export async function completeOnboardingAction(): Promise<{ ok: boolean; error?:
   if (!auth.ok) return { ok: false, error: { code: 'AUTH', message: 'Not signed in.' } }
   const r = await completeOnboarding({ userId: auth.data.userId, organizationId: auth.data.organizationId })
   if (!r.ok) return { ok: false, error: r.error }
-  revalidatePath('/onboarding')
-  revalidatePath('/dashboard')
-  revalidatePath('/settings')
+  safeRevalidate('/onboarding')
+  safeRevalidate('/dashboard')
+  safeRevalidate('/settings')
   return { ok: true }
 }
 
@@ -295,8 +298,8 @@ export async function updateOwnProfileAction(input: unknown): Promise<{ ok: bool
   }
   const r = await updateOwnProfile({ userId: auth.data.userId, organizationId: auth.data.organizationId }, parsed.data)
   if (!r.ok) return { ok: false, error: r.error }
-  revalidatePath('/settings')
-  revalidatePath('/dashboard')
+  safeRevalidate('/settings')
+  safeRevalidate('/dashboard')
   return { ok: true }
 }
 
@@ -334,6 +337,6 @@ export async function updateOwnOrganizationAction(input: unknown): Promise<{ ok:
     parsed.data,
   )
   if (!r.ok) return { ok: false, error: r.error }
-  revalidatePath('/settings')
+  safeRevalidate('/settings')
   return { ok: true }
 }

@@ -52,7 +52,7 @@ export function IntegrationsSection({ initialError }: { initialError?: string })
     try {
       const r = await disconnectGoogleAction()
       if (!r.ok) {
-        setError(r.error)
+        setError(r.error.message)
         return
       }
       // refresh status

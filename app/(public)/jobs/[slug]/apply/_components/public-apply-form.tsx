@@ -23,17 +23,24 @@ import {
 } from 'lucide-react'
 
 const MAX_CV_BYTES = 5 * 1024 * 1024 // 5MB
+/**
+ * Sprint 19 (audit P2-09): the form advertised "PDF, DOCX, or TXT" but the
+ * server only accepts PDF and DOCX — a plain-text résumé hit a dead end
+ * at the last step. The advertised types now match what the server
+ * accepts.
+ */
 const ACCEPTED_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'text/plain',
 ]
-const ACCEPTED_EXT = '.pdf,.docx,.txt'
+const ACCEPTED_EXT = '.pdf,.docx'
 
 interface Props {
   jobSlug: string
   jobTitle: string
   organizationName: string
+  /** The exact consent scope the applicant agrees to (server-rendered). */
+  consentText: string
 }
 
 type Status =
@@ -42,7 +49,7 @@ type Status =
   | { kind: 'error'; message: string }
   | { kind: 'success' }
 
-export function PublicApplyForm({ jobSlug, jobTitle, organizationName }: Props) {
+export function PublicApplyForm({ jobSlug, jobTitle, organizationName, consentText }: Props) {
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [cvFile, setCvFile] = useState<File | null>(null)
   const [cvError, setCvError] = useState<string | null>(null)
@@ -59,8 +66,8 @@ export function PublicApplyForm({ jobSlug, jobTitle, organizationName }: Props) 
       setCvFile(null)
       return
     }
-    if (!ACCEPTED_TYPES.includes(file.type) && !/\.(pdf|docx|txt)$/i.test(file.name)) {
-      setCvError('Please upload a PDF, DOCX, or TXT file.')
+    if (!ACCEPTED_TYPES.includes(file.type) && !/\.(pdf|docx)$/i.test(file.name)) {
+      setCvError('Please upload a PDF or DOCX file.')
       setCvFile(null)
       return
     }
@@ -279,7 +286,7 @@ export function PublicApplyForm({ jobSlug, jobTitle, organizationName }: Props) 
                 Click to upload your CV
               </span>
               <span className="mt-1 block text-xs text-slate-500">
-                PDF, DOCX, or TXT — max 5MB
+                PDF or DOCX — max 5MB
               </span>
             </label>
           )}
@@ -303,9 +310,7 @@ export function PublicApplyForm({ jobSlug, jobTitle, organizationName }: Props) 
             className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
           />
           <span>
-            I agree to share my information with <strong>{organizationName}</strong> for the
-            purpose of this application. I understand that my data will be stored in TalentOS
-            and that the employer may contact me about this or future opportunities.
+            {consentText}
             {fieldErrors.consent && (
               <span className="mt-1 block text-xs text-red-600">{fieldErrors.consent}</span>
             )}

@@ -137,12 +137,23 @@ async function main() {
   // === 6. CV files belong to same-tenant candidates ===
   console.log('=== CV Files ===')
   const cvFiles = await db.cVFile.findMany({
-    include: { candidate: { select: { organizationId: true } } },
+    select: {
+      id: true,
+      candidate: {
+        select: {
+          organizationId: true,
+          hiringRequest: { select: { organizationId: true } },
+        },
+      },
+    },
   })
   console.log(`Total: ${cvFiles.length}`)
   for (const cv of cvFiles) {
-    if (cv.candidate.organizationId !== cv.organizationId && cv.organizationId) {
-      // CVFile doesn't have organizationId directly, inherited via candidate
+    // CVFile has no organizationId column of its own — the tenant is inherited
+    // from its candidate. The check that can actually fail is a CV file whose
+    // candidate sits in a different org than the candidate's own requisition.
+    if (cv.candidate.organizationId !== cv.candidate.hiringRequest?.organizationId) {
+      add('HIGH', 'CVFile', `CV file ${cv.id} candidate org ≠ candidate requisition org`)
     }
   }
   // CVFile inherits org from candidate; that's fine

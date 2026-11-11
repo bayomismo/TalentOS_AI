@@ -19,6 +19,10 @@
  *   3. Validate the parsed JSON with the Zod schema.
  *   4. On failure: retry once with a corrective system message.
  *   5. On second failure: throw `SchemaValidationError`.
+ *
+ * Transient provider failures (429 / 5xx — a capacity spike on the
+ * provider's side) are retried with a backoff, independently of the
+ * schema-validation retries, because the request itself was fine.
  */
 
 import type { ZodType } from 'zod'
@@ -231,6 +235,13 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
+    // True when the previous attempt failed for a TRANSIENT reason (a
+    // provider capacity spike) rather than a schema mismatch. A
+    // transient failure must be retried with the ORIGINAL prompt —
+    // telling the model "your previous response did not validate" after
+    // the request never reached it would be nonsense, and it would waste
+    // an otherwise perfectly good attempt.
+    const lastWasTransient = { value: false }
     // 4 attempts with specific Zod issues in the corrective prompt
     // (same pattern as callInterviewKit / callDecisionBrief).
     const maxAttempts = 4
@@ -241,6 +252,11 @@ export class AIEngine {
       if (attempt === 1) {
         promptToUse = fullPrompt
         temperature = 0.3
+      } else if (lastWasTransient.value) {
+        // The previous attempt never reached the model (capacity
+        // spike). Retry the original request unchanged.
+        promptToUse = fullPrompt
+        temperature = 0.4
       } else {
         const issues = lastError.value instanceof Error
           ? lastError.value.message.slice(0, 800)
@@ -264,6 +280,7 @@ export class AIEngine {
           parsedJson = JSON.parse(rawText)
         } catch (jsonErr) {
           lastError.value = jsonErr
+          lastWasTransient.value = false
           continue
         }
         const parsed = offerLetterOutputSchema.safeParse(parsedJson)
@@ -271,7 +288,17 @@ export class AIEngine {
           return { ...result, data: parsed.data }
         }
         lastError.value = parsed.error
+        lastWasTransient.value = false
       } catch (err) {
+        if (err instanceof AIEngineError && err.retryable) {
+          // Transient upstream failure (a provider capacity spike). The
+          // request was well-formed, so back off and try it again rather
+          // than failing the user's upload or generation outright.
+          lastError.value = err
+          lastWasTransient.value = true
+          await sleep(backoffFor(attempt))
+          continue
+        }
         if (err instanceof AIEngineError) throw err
         lastError.value = err
       }
@@ -295,6 +322,13 @@ export class AIEngine {
   /**
    * Calls the provider with structured output, validates against the
    * Zod schema, and retries once on validation failure.
+   *
+   * A **transient provider failure** (429 / 503 / 5xx — Google's capacity
+   * layer answering "this model is currently experiencing high demand")
+   * is retried separately, with a backoff, before the call is treated as
+   * a failure. Those are not errors in our request: the same request
+   * usually succeeds a moment later, so failing the whole upload or
+   * generation on the first one was a self-inflicted outage.
    */
   private async callStructured<T>(
     promptId: string,
@@ -302,7 +336,12 @@ export class AIEngine {
     schema: ZodType<T>
   ): Promise<ProviderResult<T>> {
     let lastError: unknown = null
-    const maxAttempts = 2
+    // 4 attempts: the first plus three retries. A schema miss and a
+    // transient provider failure both get another chance — the second
+    // one because Google's capacity layer answers 503 for requests that
+    // are perfectly fine, and the back-off (2s → 4s → 8s) is what
+    // actually gets it through the spike.
+    const maxAttempts = 4
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -319,6 +358,14 @@ export class AIEngine {
           continue
         }
       } catch (err) {
+        if (err instanceof AIEngineError && err.retryable) {
+          // Transient upstream failure — back off and try again.
+          if (attempt < maxAttempts) {
+            await sleep(backoffFor(attempt))
+            continue
+          }
+          throw err
+        }
         if (err instanceof AIEngineError) throw err
         lastError = err
         if (attempt < maxAttempts) {
@@ -347,6 +394,13 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
+    // True when the previous attempt failed for a TRANSIENT reason (a
+    // provider capacity spike) rather than a schema mismatch. A
+    // transient failure must be retried with the ORIGINAL prompt —
+    // telling the model "your previous response did not validate" after
+    // the request never reached it would be nonsense, and it would waste
+    // an otherwise perfectly good attempt.
+    const lastWasTransient = { value: false }
     // Up to 4 attempts: 1 initial + 3 corrective retries. Gemini's flash
     // model is non-deterministic and occasionally produces JSON that
     // doesn't match the strict Zod schema (missing fields, wrong enums,
@@ -360,6 +414,11 @@ export class AIEngine {
       let promptToUse: string
       let temperature: number
       if (attempt === 1) {
+        promptToUse = fullPrompt
+        temperature = 0.4
+      } else if (lastWasTransient.value) {
+        // The previous attempt never reached the model (capacity
+        // spike). Retry the original request unchanged.
         promptToUse = fullPrompt
         temperature = 0.4
       } else {
@@ -394,6 +453,7 @@ export class AIEngine {
           parsedJson = JSON.parse(rawText)
         } catch (jsonErr) {
           lastError.value = jsonErr
+          lastWasTransient.value = false
           continue
         }
         const parsed = interviewKitOutputSchema.safeParse(parsedJson)
@@ -401,7 +461,17 @@ export class AIEngine {
           return { ...result, data: parsed.data }
         }
         lastError.value = parsed.error
+        lastWasTransient.value = false
       } catch (err) {
+        if (err instanceof AIEngineError && err.retryable) {
+          // Transient upstream failure (a provider capacity spike). The
+          // request was well-formed, so back off and try it again rather
+          // than failing the user's upload or generation outright.
+          lastError.value = err
+          lastWasTransient.value = true
+          await sleep(backoffFor(attempt))
+          continue
+        }
         if (err instanceof AIEngineError) throw err
         lastError.value = err
       }
@@ -421,6 +491,13 @@ export class AIEngine {
     const fullPrompt = `${systemPrompt}\n\n# USER REQUEST\n${userPrompt}`
 
     const lastError: { value: unknown } = { value: null }
+    // True when the previous attempt failed for a TRANSIENT reason (a
+    // provider capacity spike) rather than a schema mismatch. A
+    // transient failure must be retried with the ORIGINAL prompt —
+    // telling the model "your previous response did not validate" after
+    // the request never reached it would be nonsense, and it would waste
+    // an otherwise perfectly good attempt.
+    const lastWasTransient = { value: false }
     // Same retry strategy as callInterviewKit: 4 attempts with the
     // specific Zod issues injected into the corrective prompt. The
     // decision-brief schema has nested arrays (evidence items) and
@@ -433,6 +510,11 @@ export class AIEngine {
       if (attempt === 1) {
         promptToUse = fullPrompt
         temperature = 0.3
+      } else if (lastWasTransient.value) {
+        // The previous attempt never reached the model (capacity
+        // spike). Retry the original request unchanged.
+        promptToUse = fullPrompt
+        temperature = 0.4
       } else {
         const issues = lastError.value instanceof Error
           ? lastError.value.message.slice(0, 800)
@@ -456,6 +538,7 @@ export class AIEngine {
           parsedJson = JSON.parse(rawText)
         } catch (jsonErr) {
           lastError.value = jsonErr
+          lastWasTransient.value = false
           continue
         }
         const parsed = decisionBriefOutputSchema.safeParse(parsedJson)
@@ -463,7 +546,17 @@ export class AIEngine {
           return { ...result, data: parsed.data }
         }
         lastError.value = parsed.error
+        lastWasTransient.value = false
       } catch (err) {
+        if (err instanceof AIEngineError && err.retryable) {
+          // Transient upstream failure (a provider capacity spike). The
+          // request was well-formed, so back off and try it again rather
+          // than failing the user's upload or generation outright.
+          lastError.value = err
+          lastWasTransient.value = true
+          await sleep(backoffFor(attempt))
+          continue
+        }
         if (err instanceof AIEngineError) throw err
         lastError.value = err
       }
@@ -476,6 +569,28 @@ export class AIEngine {
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+/**
+ * Back-off between retries of a transient provider failure.
+ *
+ * Deliberately short: Google's capacity layer usually clears within a
+ * couple of seconds, and a user waiting on a CV upload should not wait
+ * a minute to be told the model is busy. The delay doubles per attempt
+ * (2s → 4s → 8s) and is capped, so a sustained spike is survived
+ * without the request hanging.
+ */
+const BACKOFF_MS = 2_000
+const BACKOFF_MAX_MS = 15_000
+
+/** Promise-based sleep. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Exponential back-off for attempt N (1-based), capped. */
+function backoffFor(attempt: number): number {
+  return Math.min(BACKOFF_MS * 2 ** (attempt - 1), BACKOFF_MAX_MS)
+}
 
 function serializeZodError(err: unknown): unknown {
   if (err && typeof err === 'object' && 'issues' in err) {

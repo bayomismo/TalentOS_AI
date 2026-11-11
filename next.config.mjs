@@ -1,7 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    ignoreBuildErrors: true,
+    // Sprint 19 — the build now TYPE-CHECKS.
+    //
+    // `ignoreBuildErrors: true` was set early in the project's life and
+    // never revisited. It meant `npx next build` succeeded while the
+    // repository had 46 TypeScript errors — which is exactly how the
+    // `stageUpdated` defect from commit 09d4dbb (a flag that was set but
+    // never read) shipped to production unnoticed.
+    //
+    // The type gate is now `npx tsc --noEmit -p tsconfig.json` → 0 errors,
+    // enforced in CI and locally, and the build enforces it too.
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,

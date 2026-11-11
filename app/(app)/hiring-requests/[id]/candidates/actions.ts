@@ -19,11 +19,19 @@
  */
 
 import { safeRevalidate } from '@/lib/utils/revalidate'
-import { revalidatePath } from 'next/cache'
 
 import { db } from '@/lib/db'
-import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
-import { validateStageTransition } from '@/lib/candidates/state-machine'
+import { requirePermission, recordAuditLog } from '@/lib/auth'
+import { validateStageTransition, allowedNextStages } from '@/lib/candidates/state-machine'
+import { transitionCandidateStage } from '@/lib/candidates/transition'
+import { syncCandidateStatus } from '@/lib/candidates/status'
+import { allowedNextHiringRequestStatuses } from '@/lib/hiring-requests/state-machine'
+import {
+  countActiveApplicants,
+  countHiredCandidates,
+  evaluateHiringRequestCapacity,
+  syncHiringRequestFilled,
+} from '@/lib/hiring-requests/capacity'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
@@ -44,7 +52,7 @@ import type {
   MatchAnalysisSnapshot,
   ActivitySnapshot,
 } from '@/lib/events/types'
-import type { ApplicationStage, Prisma } from '@prisma/client'
+import type { ApplicationStage, HiringRequestStatus, Prisma } from '@prisma/client'
 
 // -----------------------------------------------------------------------------
 // Action result helpers (same shape used by Sprint 5)
@@ -52,7 +60,34 @@ import type { ApplicationStage, Prisma } from '@prisma/client'
 
 export type ActionResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string; retryable: boolean } }
+  | {
+      ok: false
+      error: { code: string; message: string; retryable: boolean }
+      /** Optional structured context attached to a failure (e.g. AI quota
+       *  usage). Never contains secrets — only counters and timestamps. */
+      meta?: ActionMeta
+    }
+
+/** Optional structured context attached to a failure. */
+export interface ActionMeta {
+  used?: number
+  quota?: number
+  resetAt?: string
+  [key: string]: unknown
+}
+
+/**
+ * Raised inside the bulk-move transaction when a candidate's stage changed
+ * between the pre-flight validation and the write. It aborts the whole
+ * batch (the transaction rolls back) instead of leaving a half-applied
+ * move behind.
+ */
+class BulkTransitionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BulkTransitionError'
+  }
+}
 
 function actionError(err: unknown): { ok: false; error: { code: string; message: string; retryable: boolean } } {
   if (err instanceof CVError) {
@@ -84,6 +119,17 @@ export interface WorkspaceCandidate {
   yearsExperience: number | null
   topSkills: string[]
   stage: ApplicationStage
+  /**
+   * The `Candidate.status` mirror of `stage` (audit P1-27). Kept in sync
+   * by every stage write; read it, never derive it in the UI.
+   */
+  status: string
+  /**
+   * The stages this candidate may legally move to next. Computed on the
+   * server from the candidate state machine so the UI can never offer an
+   * illegal transition (audit P0-09).
+   */
+  allowedNextStages: ApplicationStage[]
   rating: number
   matchScore: number | null
   recommendation: string | null
@@ -101,11 +147,29 @@ export interface WorkspacePayload {
   hiringRequest: {
     id: string
     title: string
-    status: string
+    /**
+     * The real requisition status (audit P1-17). `ON_HOLD`, `CLOSED`,
+     * `FILLED` and `CANCELLED` are reachable now.
+     */
+    status: HiringRequestStatus
+    /**
+     * The statuses this requisition may legally move to next, computed on
+     * the server from the hiring-request state machine.
+     */
+    allowedNextStatuses: HiringRequestStatus[]
     department: string
     location: string | null
     openings: number
+    /** Hires recorded on this requisition (the single source of truth). */
     filled: number
+    /** Candidates still in the pipeline (not in a terminal stage). */
+    activeApplicants: number
+    /** How many more candidates the requisition can take. Never negative. */
+    remainingCapacity: number
+    /** True when the requisition has reached its openings. */
+    atCapacity: boolean
+    /** The attached job description, if any (audit P1-26). */
+    jobDescriptionId: string | null
   }
   jobDescription: {
     id: string | null
@@ -167,6 +231,8 @@ export async function getCandidateWorkspaceAction(
       yearsExperience: c.yearsExperience,
       topSkills: c.skills.map(s => s.name),
       stage: c.stage,
+      status: c.status,
+      allowedNextStages: [...allowedNextStages(c.stage)],
       rating: c.rating,
       matchScore: c.matchScore,
       recommendation: c.recommendation,
@@ -189,6 +255,18 @@ export async function getCandidateWorkspaceAction(
         ? Math.round(analyzed.reduce((sum, c) => sum + (c.matchScore ?? 0), 0) / analyzed.length)
         : null
 
+    // Audit P0-02 / P1-18 — `filled` is DERIVED from the pipeline (the
+    // number of candidates on this requisition in stage HIRED). The
+    // stored column is refreshed by `syncHiringRequestFilled` on every
+    // stage write; reading it back here keeps the two in agreement even
+    // for rows written before this rule existed.
+    const [hiredCount, activeApplicants] = await Promise.all([
+      countHiredCandidates(db, hr.id),
+      countActiveApplicants(db, hr.id),
+    ])
+    const filled = Math.max(0, hiredCount)
+    const remainingCapacity = Math.max(0, hr.openings - filled - activeApplicants)
+
     return {
       ok: true,
       data: {
@@ -196,10 +274,15 @@ export async function getCandidateWorkspaceAction(
           id: hr.id,
           title: hr.title,
           status: hr.status,
+          allowedNextStatuses: [...allowedNextHiringRequestStatuses(hr.status)],
           department: hr.department.name,
           location: hr.location,
           openings: hr.openings,
-          filled: hr.filled,
+          filled,
+          activeApplicants,
+          remainingCapacity,
+          atCapacity: remainingCapacity === 0,
+          jobDescriptionId: hr.jobDescriptionId,
         },
         jobDescription: hr.jobDescription
           ? {
@@ -461,9 +544,34 @@ export async function uploadCVsAction(
               hiringRequestId: hr.id,
             },
           },
-          select: { id: true, createdAt: true },
+          select: { id: true, createdAt: true, stage: true, status: true },
         })
-    
+
+        // Audit P1-25 — capacity gate. A requisition with 1 opening must
+        // not silently accumulate 40 candidates. A RE-UPLOAD is not an
+        // addition (the candidate already occupies a slot), so it is not
+        // gated; a genuinely NEW candidate is.
+        if (!existing) {
+          const capacity = await evaluateHiringRequestCapacity(db, {
+            id: hr.id,
+            title: hr.title,
+            openings: hr.openings,
+            filled: hr.filled,
+          })
+          if (!capacity.ok) {
+            results.push({
+              clientId,
+              fileName,
+              fileKind: parsed.fileKind,
+              fileSize: parsed.size,
+              candidate: null,
+              error: { code: 'HIRING_REQUEST_FULL', message: capacity.message ?? 'This hiring request has no capacity left.' },
+            })
+            failed++
+            continue
+          }
+        }
+
         const createdRow = await db.$transaction(async tx => {
                 const candidate = existing
             ? await tx.candidate.update({
@@ -479,9 +587,16 @@ export async function uploadCVsAction(
                   summary: profile.summary,
                   source: 'CV Upload',
                   sourceDetails: fileName,
-                  // Use the AI-recommended stage as the starting point, except
-                  // for the rejected case (we still create the row, but flagged).
-                  stage: profile.recommendedStage === 'REJECTED' ? 'REJECTED' : 'APPLIED',
+                  // Audit P2-04 — a re-upload refreshes the PROFILE, never
+                  // the pipeline position. The stage is deliberately NOT
+                  // written here: re-uploading a corrected CV must not move
+                  // a candidate backwards (and must not resurrect a
+                  // rejected, withdrawn or hired candidate).
+                  //
+                  // Audit P2-03 — the AI recommends, a human decides. The
+                  // AI's recommended stage is surfaced as the
+                  // `recommendation` label below; it is never written to
+                  // `stage` as a terminal REJECTED.
                   // AI analysis (Sprint 6)
                   matchScore: ranking.overallScore,
                   matchScoreBreakdown: {
@@ -513,7 +628,14 @@ export async function uploadCVsAction(
                   summary: profile.summary,
                   source: 'CV Upload',
                   sourceDetails: fileName,
-                  stage: profile.recommendedStage === 'REJECTED' ? 'REJECTED' : 'APPLIED',
+                  // Audit P2-03 — the AI RECOMMENDS, a human DECIDES. A new
+                  // candidate always enters the pipeline at APPLIED. The
+                  // AI's opinion is recorded in `recommendation` /
+                  // `recommendationReasoning` and surfaced in the UI; it is
+                  // never allowed to create a terminal REJECTED candidate
+                  // with no human review.
+                  stage: 'APPLIED',
+                  status: 'ACTIVE',
                   // AI analysis (Sprint 6)
                   matchScore: ranking.overallScore,
                   matchScoreBreakdown: {
@@ -528,8 +650,6 @@ export async function uploadCVsAction(
                   gaps: ranking.gaps,
                   concerns: ranking.concerns,
                   analyzedAt: new Date(),
-                  // Use the AI-recommended stage as the starting point, except
-                  // for the rejected case (we still create the row, but flagged).
                 },
               })
       
@@ -542,6 +662,11 @@ export async function uploadCVsAction(
             await tx.candidateCertification.deleteMany({ where: { candidateId: candidate.id } })
             // Don't delete CVFiles — keep history.
           }
+
+          // Audit P1-27 — repair the `status` mirror. A re-upload does not
+          // change the stage, but it is a good moment to make sure the
+          // mirror agrees with the stage it mirrors.
+          await syncCandidateStatus(tx, candidate.id, candidate.stage)
 
                 // Skills
           if (profile.topSkills.length > 0) {
@@ -642,6 +767,8 @@ export async function uploadCVsAction(
           yearsExperience: createdRow.yearsExperience,
           topSkills: profile.topSkills,
           stage: createdRow.stage,
+          status: createdRow.status,
+          allowedNextStages: [...allowedNextStages(createdRow.stage)],
           rating: createdRow.rating,
           matchScore: createdRow.matchScore,
           recommendation: createdRow.recommendation,
@@ -720,15 +847,12 @@ export async function uploadCVsAction(
       }
     }
 
-    try {
-      revalidatePath(`/hiring-requests/${input.hiringRequestId}/candidates`)
-      revalidatePath('/hiring-requests')
-      revalidatePath('/candidates')
-    } catch {
-      // revalidatePath throws when called outside a Next.js request context
-      // (e.g. from CLI scripts). Swallow — the DB write is the source of
-      // truth, and the next request re-fetches anyway.
-    }
+    // `safeRevalidate` swallows the "static generation store missing"
+    // invariant that `revalidatePath` throws when the action is called
+    // from a script instead of a Next.js request context.
+    safeRevalidate(`/hiring-requests/${input.hiringRequestId}/candidates`)
+    safeRevalidate('/hiring-requests')
+    safeRevalidate('/candidates')
     // Publish a single rank update for the workspace
     const ranked: CandidateRankedSnapshot = {
       hiringRequestId: input.hiringRequestId,
@@ -860,12 +984,8 @@ export async function reanalyzeCandidateAction(
       },
     })
 
-    try {
-      revalidatePath(`/hiring-requests/${candidate.hiringRequestId}/candidates`)
-      revalidatePath(`/candidates/${candidate.id}`)
-    } catch {
-      // see uploadCVsAction for why we swallow
-    }
+    safeRevalidate(`/hiring-requests/${candidate.hiringRequestId}/candidates`)
+    safeRevalidate(`/candidates/${candidate.id}`)
 
     const workspace: WorkspaceCandidate = {
       id: candidate.id,
@@ -875,6 +995,8 @@ export async function reanalyzeCandidateAction(
       yearsExperience: candidate.yearsExperience,
       topSkills: candidate.skills.map(s => s.name),
       stage: candidate.stage,
+      status: candidate.status,
+      allowedNextStages: [...allowedNextStages(candidate.stage)],
       rating: candidate.rating,
       matchScore: ranking.data.overallScore,
       recommendation: recommendationToLabel(ranking.data.recommendation),
@@ -901,6 +1023,11 @@ export async function reanalyzeCandidateAction(
 export interface MoveCandidateStageInput {
   candidateId: string
   toStage: ApplicationStage
+  /**
+   * Optional human note. Stored as `rejectedReason` when the candidate is
+   * moved to REJECTED; ignored for every other target stage.
+   */
+  reason?: string
 }
 
 export interface MoveCandidateStageSuccess {
@@ -934,17 +1061,41 @@ export async function moveCandidateStageAction(
       return { ok: false, error: { code: 'CANDIDATE_NOT_FOUND', message: 'Candidate not found.', retryable: false } }
     }
 
-    const updated = await db.$transaction(async tx => {
-      const u = await tx.candidate.update({
-        where: { id: candidate.id },
-        data: {
-          stage: input.toStage,
-          rejectedAt: input.toStage === 'REJECTED' ? new Date() : null,
-          hiredAt: input.toStage === 'HIRED' ? new Date() : null,
-          withdrawnAt: input.toStage === 'WITHDRAWN' ? new Date() : null,
-          lastActivityAt: new Date(),
-        },
+    // Audit P0-09 — every stage write goes through the shared transition
+    // helper, which validates the move BEFORE it writes. An illegal
+    // transition (APPLIED → HIRED, HIRED → APPLIED, any move out of a
+    // terminal stage) is REFUSED and leaves the row untouched.
+    const outcome = await db.$transaction(async tx => {
+      const moved = await transitionCandidateStage(tx, {
+        candidateId: candidate.id,
+        toStage: input.toStage,
+        actorId,
+        reason: input.reason ?? null,
       })
+      if (!moved.ok) {
+        // The helper validates before it writes, so nothing was changed:
+        // returning here commits an empty transaction.
+        return { ok: false as const, error: moved.error }
+      }
+
+      // Audit P1-27 — keep the `Candidate.status` mirror in step with the
+      // stage, so the two copies of the same fact can never disagree.
+      await syncCandidateStatus(tx, candidate.id, input.toStage)
+
+      // Audit P0-02 / P1-18 — `filled` is DERIVED from the pipeline, never
+      // accumulated, so it can never drift from the real HIRED count.
+      await syncHiringRequestFilled(tx, candidate.hiringRequestId)
+
+      const u = await tx.candidate.findUnique({
+        where: { id: candidate.id },
+        include: { skills: true },
+      })
+      if (!u) {
+        return {
+          ok: false as const,
+          error: { code: 'CANDIDATE_NOT_FOUND', message: 'Candidate not found.', retryable: false },
+        }
+      }
 
       const activity = await tx.activity.create({
         data: {
@@ -954,20 +1105,21 @@ export async function moveCandidateStageAction(
           candidateId: candidate.id,
           hiringRequestId: candidate.hiringRequestId,
           title: `${u.firstName} ${u.lastName} → ${input.toStage.toLowerCase()}`,
-          description: `Moved from ${candidate.stage} to ${input.toStage}.`,
+          description: `Moved from ${moved.data.fromStage} to ${input.toStage}.`,
         },
         include: { actor: true },
       })
 
-      return { u, activity }
+      return { ok: true as const, u, activity }
     })
 
-    try {
-      revalidatePath(`/hiring-requests/${candidate.hiringRequestId}/candidates`)
-      revalidatePath(`/candidates/${candidate.id}`)
-    } catch {
-      // see uploadCVsAction for why we swallow
+    if (!outcome.ok) {
+      return { ok: false, error: outcome.error }
     }
+    const updated = outcome
+
+    safeRevalidate(`/hiring-requests/${candidate.hiringRequestId}/candidates`)
+    safeRevalidate(`/candidates/${candidate.id}`)
 
     const actorName = updated.activity.actor
       ? `${updated.activity.actor.firstName} ${updated.activity.actor.lastName}`
@@ -1003,8 +1155,10 @@ export async function moveCandidateStageAction(
       email: updated.u.email,
       currentTitle: updated.u.currentTitle,
       yearsExperience: updated.u.yearsExperience,
-      topSkills: candidate.skills.map(s => s.name),
+      topSkills: updated.u.skills.map(s => s.name),
       stage: updated.u.stage,
+      status: updated.u.status,
+      allowedNextStages: [...allowedNextStages(updated.u.stage)],
       rating: updated.u.rating,
       matchScore: updated.u.matchScore,
       recommendation: updated.u.recommendation,
@@ -1146,14 +1300,43 @@ export async function bulkMoveCandidatesAction(
     const actorName = actor?.firstName ?? 'admin'
     const defaultDescription = `Bulk moved by ${actorName}`
 
-    await db.$transaction([
-      db.candidate.updateMany({
-        where: { id: { in: toUpdate.map(c => c.id) } },
-        data: { stage: input.toStage },
-      }),
+    // Audit P2-05 — the bulk path must mirror the single-candidate path
+    // EXACTLY: the same state-machine validation, the same lifecycle
+    // timestamps (`hiredAt` / `rejectedAt` + `rejectedReason` /
+    // `withdrawnAt`), the same `status` mirror and the same Application
+    // row sync. It previously wrote `stage` with a bare `updateMany`, so a
+    // candidate hired in bulk had `hiredAt = null` and every downstream
+    // time-to-hire metric was silently wrong.
+    const movedIds: string[] = []
+    await db.$transaction(async tx => {
+      for (const c of toUpdate) {
+        const moved = await transitionCandidateStage(tx, {
+          candidateId: c.id,
+          toStage: input.toStage,
+          actorId,
+          reason: input.reason ?? null,
+        })
+        if (!moved.ok) {
+          // The pre-flight validation above already rejected the whole
+          // batch for an illegal transition. Reaching here means the row
+          // changed under us — refuse the batch rather than write a
+          // half-applied move.
+          throw new BulkTransitionError(moved.error.message)
+        }
+        await syncCandidateStatus(tx, c.id, input.toStage)
+        movedIds.push(c.id)
+      }
+
+      // Audit P0-02 / P1-18 — `filled` is derived from the pipeline. One
+      // recomputation per requisition touched by the batch.
+      const touchedRequisitions = new Set(toUpdate.map(c => c.hiringRequestId))
+      for (const hrId of touchedRequisitions) {
+        await syncHiringRequestFilled(tx, hrId)
+      }
+
       // Activity per candidate (capped for performance)
-      ...toUpdate.slice(0, 50).flatMap(c => [
-        db.activity.create({
+      for (const c of toUpdate.slice(0, 50)) {
+        await tx.activity.create({
           data: {
             organizationId: orgId,
             type: 'CANDIDATE_MOVED' as never,
@@ -1164,9 +1347,9 @@ export async function bulkMoveCandidatesAction(
             hiringRequestId: c.hiringRequestId,
             occurredAt: now,
           },
-        }),
-      ]),
-    ])
+        })
+      }
+    })
 
     await recordAuditLog({
       organizationId: orgId,
@@ -1179,8 +1362,19 @@ export async function bulkMoveCandidatesAction(
     }).catch(() => null)
 
     safeRevalidate('/candidates')
-    return { ok: true, data: { movedCount: toUpdate.length, skippedCount } }
+    safeRevalidate(`/hiring-requests/${toUpdate[0].hiringRequestId}/candidates`)
+    return { ok: true, data: { movedCount: movedIds.length, skippedCount } }
   } catch (err) {
+    if (err instanceof BulkTransitionError) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_STAGE_TRANSITION',
+          message: err.message,
+          retryable: false,
+        },
+      }
+    }
     return { ok: false, error: { code: 'INTERNAL', message: err instanceof Error ? err.message : 'Unexpected error', retryable: true } }
   }
 }

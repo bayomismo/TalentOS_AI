@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, ShieldIcon, SparklesIcon, UserIcon, UsersIcon,
+  BellIcon, BuildingIcon, DatabaseIcon, KeyIcon, MailIcon, ShieldIcon, SparklesIcon, UserIcon, UsersIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
@@ -25,6 +25,7 @@ import { ProfileSection } from './_components/profile-section'
 import { OrganizationSection } from './_components/organization-section'
 import { AiUsageSection } from './_components/ai-usage-section'
 import { IntegrationsSection } from './_components/integrations-section.client'
+import { EmailDeliverySection } from './_components/email-delivery-section'
 import { ComingSoonSection } from './_components/coming-soon-section'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +38,7 @@ const settingsSections = [
   { id: 'notifications', label: 'Notifications', icon: BellIcon, notImplemented: true, notImplementedLabel: 'Notification preferences will be configurable in a future release. We currently send all transactional alerts (interview reminders, offer activity) regardless of this setting.' },
   { id: 'security', label: 'Security', icon: ShieldIcon },
   { id: 'integrations', label: 'Integrations', icon: KeyIcon, adminOnly: true },
+  { id: 'email', label: 'Email Delivery', icon: MailIcon, adminOnly: true },
 ] as const
 
 type SettingsSectionId = (typeof settingsSections)[number]['id']
@@ -128,6 +130,14 @@ export default function SettingsPage() {
             <Card>
               <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
                 Only administrators can manage integrations.
+              </CardContent>
+            </Card>
+          )}
+          {active === 'email' && isAdmin && <EmailDeliverySection />}
+          {active === 'email' && !isAdmin && (
+            <Card>
+              <CardContent className="p-6 text-sm text-slate-600 dark:text-slate-300">
+                Only administrators can view the email delivery log.
               </CardContent>
             </Card>
           )}

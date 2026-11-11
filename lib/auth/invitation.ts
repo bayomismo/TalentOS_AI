@@ -1,5 +1,5 @@
 /**
- * Sprint 9 — Invitation utilities.
+ * Sprint 9 / Sprint 19 — Invitation utilities.
  *
  * PART 16: organization user invitations. Secure tokens via
  * crypto.randomBytes(32). We store ONLY the SHA-256 hash of the token
@@ -7,9 +7,15 @@
  * ONCE to the inviter at creation time and ONCE to the recipient when
  * they accept.
  *
- * PART 17: since no email provider is configured, the invitation URL is
- * surfaced to the inviter only. Future email delivery should be
- * pluggable here.
+ * Sprint 19 (business-flow audit):
+ *   P1-23 — `createInvitation` now sends the invitation email itself
+ *     (when a delivery provider is configured) and reports what
+ *     happened, so the Settings invite is not a copy-and-paste-only
+ *     flow any more.
+ *   P1-22 — `acceptInvitation` no longer THROWS for the two most common
+ *     real cases (the email already belongs to another organization, or
+ *     the account is already active). It returns a clean error.
+ *   P1-24 — see the mailbox-ownership limitation documented below.
  */
 
 import { createHash, randomBytes } from 'crypto'
@@ -19,10 +25,56 @@ import { recordAuditLog } from './audit'
 import { hashPassword } from './password'
 import { validatePassword } from './password'
 import { buildAcceptInviteUrl } from '@/lib/url/canonical'
+import { rateLimit } from './rate-limit'
+import { sendEmail, isEmailDeliveryConfigured } from '@/lib/email'
+import { teamInvitationEmail } from '@/lib/email/templates'
 
 export const INVITATION_TTL_DAYS = 7
 const TOKEN_PREFIX_LEN = 8
 const ACCEPT_MIN_PASSWORD_LEN = 10
+
+/**
+ * LIMITATION — mailbox ownership is NOT verified (audit P1-24).
+ *
+ * The invitation token is a BEARER CREDENTIAL for the invited mailbox.
+ * Acceptance requires nothing but that token plus a password the
+ * invitee chooses, so anyone who obtains or is forwarded the invitation
+ * link can claim the seat — with whatever role the invitation granted,
+ * including ADMIN. `User.emailVerified` is deliberately left unset,
+ * because setting it would assert a verification that never happened.
+ *
+ * WHY IT IS NOT VERIFIED HERE: proving that a mailbox belongs to the
+ * person accepting requires delivering a challenge TO that mailbox, and
+ * this deployment has no email delivery provider configured
+ * (`RESEND_API_KEY` is not set, so every message is queued in the local
+ * outbox and never sent). A verification step that can never complete
+ * would lock every legitimate invitee out of their own account, which
+ * is a worse failure than the limitation itself. When a provider IS
+ * configured, `createInvitation` emails the invitation; that is the
+ * transport a future OTP/challenge step would ride on.
+ *
+ * COMPENSATING CONTROLS that hold without a delivery provider:
+ *   · the token is 256 bits of CSPRNG output and is stored ONLY as a
+ *     SHA-256 hash — a database read cannot reconstruct it;
+ *   · the token is single use: acceptance marks the invitation ACCEPTED
+ *     and a second attempt is refused;
+ *   · the token expires after 7 days;
+ *   · acceptance is rate limited per token and per IP, so the token
+ *     cannot be brute-forced through this endpoint;
+ *   · an invitation for an email that already belongs to another
+ *     organization is refused — it can never be used to take over an
+ *     existing account in a different tenant;
+ *   · an invitation for an ALREADY ACTIVE account is refused: the
+ *     existing password is never overwritten by an invitation;
+ *   · acceptance is recorded in the audit log together with the fact
+ *     that mailbox ownership was NOT verified.
+ *
+ * WHAT WOULD CLOSE THIS: an emailed one-time challenge (OTP) that the
+ * invitee must echo back before the account is activated, plus
+ * `User.emailVerified` being set at that moment. Both need a delivery
+ * provider and a place to store the challenge hash.
+ */
+export const MAILBOX_OWNERSHIP_VERIFIED = false
 
 export interface CreateInvitationInput {
   organizationId: string
@@ -37,15 +89,28 @@ export interface CreateInvitationInput {
   departmentId?: string | null
 }
 
+export interface CreateInvitationResult {
+  invitation: Invitation
+  token: string
+  url: string
+  /** True when a real provider accepted the invitation email. */
+  emailDelivered: boolean
+  /** True when a delivery provider is configured at all. */
+  emailConfigured: boolean
+}
+
 /**
  * Creates a new PENDING invitation. Returns the invitation record
- * together with the plaintext token and the URL to share. The caller is
- * responsible for surfacing the URL to the inviter (PART 17: no email
- * provider yet).
+ * together with the plaintext token and the URL to share.
+ *
+ * The invitation email is sent through the configured provider. When no
+ * provider is configured the message is queued in the local outbox and
+ * NOT delivered — `emailDelivered` says so, so the caller never tells
+ * an admin that an email went out when it did not.
  */
 export async function createInvitation(
   input: CreateInvitationInput,
-): Promise<{ invitation: Invitation; token: string; url: string }> {
+): Promise<CreateInvitationResult> {
   const token = randomBytes(32).toString('base64url')
   const tokenHash = hashToken(token)
   const tokenPrefix = token.slice(0, TOKEN_PREFIX_LEN)
@@ -79,7 +144,49 @@ export async function createInvitation(
   })
 
   const url = buildInvitationUrl(token)
-  return { invitation, token, url }
+
+  // Audit P1-23 / P0-03: send the invitation and report what happened.
+  const emailConfigured = isEmailDeliveryConfigured()
+  let emailDelivered = false
+  try {
+    const [org, inviter] = await Promise.all([
+      db.organization.findUnique({
+        where: { id: input.organizationId },
+        select: { name: true },
+      }),
+      db.user.findUnique({
+        where: { id: input.invitedById },
+        select: { firstName: true, lastName: true, email: true },
+      }),
+    ])
+    if (org && inviter) {
+      const tpl = teamInvitationEmail({
+        to: invitation.email,
+        inviterName: `${inviter.firstName} ${inviter.lastName}`,
+        inviterEmail: inviter.email,
+        organizationName: org.name,
+        role: input.role,
+        token,
+        message: input.message ?? null,
+      })
+      const sent = await sendEmail({
+        kind: 'team_invitation',
+        to: invitation.email,
+        from: tpl.from,
+        subject: tpl.subject,
+        text: tpl.text,
+        html: tpl.html,
+        metadata: { invitationId: invitation.id },
+      })
+      emailDelivered = sent.delivery === 'delivered'
+    }
+  } catch (err) {
+    // The invitation still exists and the URL is still returned to the
+    // inviter — but the failure must not be silent (audit P0-03).
+    console.error('[invitation] failed to send the invitation email:', err)
+  }
+
+  return { invitation, token, url, emailDelivered, emailConfigured }
 }
 
 /**
@@ -105,13 +212,19 @@ export async function revokeInvitation(invitationId: string, byUserId: string): 
 
 export type AcceptInvitationResult =
   | { ok: true; userId: string; organizationId: string; role: UserRole }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; code?: string }
 
 /**
  * Accepts an invitation. Validates the token, expiry, and password.
  * Creates or activates the user and marks the invitation ACCEPTED.
  * Idempotent: a second accept on the same token returns a `not_found`
  * (the token row no longer exists for non-pending status).
+ *
+ * Sprint 19 (audit P1-22): the two most common real situations — the
+ * email already belongs to another organization, and the account is
+ * already active — used to THROW inside the transaction. The action had
+ * no try/catch, so the invitee got an unhandled server error instead of
+ * a message. Both are now clean, returned failures.
  */
 export async function acceptInvitation(input: {
   token: string
@@ -126,6 +239,22 @@ export async function acceptInvitation(input: {
   }
   if (input.firstName.length > 64 || input.lastName.length > 64) {
     return { ok: false, reason: 'Name is too long' }
+  }
+
+  // The token is a bearer credential: limit how often it can be tried.
+  // See the mailbox-ownership limitation documented at the top of this
+  // file — compensating controls are listed there.
+  const acceptLimit = rateLimit(
+    `accept-invite:${hashToken(input.token).slice(0, 32)}`,
+    10,
+    15 * 60,
+  )
+  if (!acceptLimit.ok) {
+    return {
+      ok: false,
+      code: 'RATE_LIMITED',
+      reason: 'Too many attempts with this invitation. Please try again in a few minutes.',
+    }
   }
 
   const tokenHash = hashToken(input.token)
@@ -167,11 +296,23 @@ export async function acceptInvitation(input: {
     let userId: string
     if (existing) {
       if (existing.organizationId !== invitation.organizationId) {
-        throw new Error('email_in_use_in_other_org')
+        // Not an error state of the world — a clean refusal. The account
+        // belongs to another tenant and an invitation can never move it.
+        return {
+          ok: false as const,
+          code: 'EMAIL_IN_OTHER_ORG',
+          reason: 'This email address already belongs to another organization.',
+        }
       }
       if (existing.passwordHash && !existing.disabledAt) {
-        // Account already set up. Reject to prevent invitation replay.
-        throw new Error('account_already_active')
+        // Account already set up. Refuse — an invitation must never
+        // overwrite the password of an active account.
+        return {
+          ok: false as const,
+          code: 'ACCOUNT_ALREADY_ACTIVE',
+          reason:
+            'This account is already active. Sign in instead, or ask an administrator to reset your password.',
+        }
       }
       userId = existing.id
       await tx.user.update({
@@ -199,6 +340,8 @@ export async function acceptInvitation(input: {
           status: 'ACTIVE',
           passwordHash,
           passwordChangedAt: new Date(),
+          // `emailVerified` stays null on purpose: the mailbox was never
+          // verified (see MAILBOX_OWNERSHIP_VERIFIED above).
           ...(invitation.departmentId ? { departmentId: invitation.departmentId } : {}),
         },
         select: { id: true },
@@ -211,8 +354,19 @@ export async function acceptInvitation(input: {
       data: { status: 'ACCEPTED', acceptedAt: new Date(), acceptedById: userId },
     })
 
-    return { userId, organizationId: invitation.organizationId, role: invitation.role }
+    return {
+      ok: true as const,
+      userId,
+      organizationId: invitation.organizationId,
+      role: invitation.role,
+    }
   })
+
+  if (!result.ok) {
+    // The invitation stays PENDING so the invitee can still be helped
+    // (or the admin can revoke it) — but nothing was written.
+    return { ok: false, reason: result.reason, code: result.code }
+  }
 
   await recordAuditLog({
     organizationId: result.organizationId,
@@ -221,10 +375,15 @@ export async function acceptInvitation(input: {
     targetType: 'invitation',
     targetId: invitation.id,
     outcome: 'success',
-    metadata: { email, role: invitation.role },
+    metadata: {
+      email,
+      role: invitation.role,
+      // Audit P1-24: recorded so the trail says what really happened.
+      mailboxOwnershipVerified: MAILBOX_OWNERSHIP_VERIFIED,
+    },
   })
 
-  return { ok: true, ...result }
+  return { ok: true, userId: result.userId, organizationId: result.organizationId, role: result.role }
 }
 
 /** Returns a list of active (PENDING, non-expired) invitations for an org. */

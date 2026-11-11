@@ -13,6 +13,7 @@
 import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
+import { AIEngineError, SchemaValidationError } from '@/lib/ai/errors/ai-engine-error'
 import { getEventBus } from '@/lib/events'
 import {
   buildDecisionBriefSystemPrompt,
@@ -133,13 +134,21 @@ export async function generateDecisionBriefService(input: {
             })),
           },
           cvMatchAnalysis: {
-            overallScore: c.matchScore ?? 0,
-            skillsScore: breakdown?.skills ?? 0,
-            experienceScore: breakdown?.experience ?? 0,
-            educationScore: breakdown?.education ?? 0,
-            roleScore: breakdown?.roleAlignment ?? 0,
-            recommendation: c.recommendation ?? 'POTENTIAL_MATCH',
-            reasoning: c.recommendationReasoning ?? '',
+            // Audit P2-16 — "no analysis" is NOT a score of 0. The
+            // brief tells the reviewer the candidate has not been
+            // analysed, so nobody mistakes a missing analysis for a
+            // terrible candidate.
+            overallScore: c.matchScore,
+            skillsScore: breakdown?.skills ?? null,
+            experienceScore: breakdown?.experience ?? null,
+            educationScore: breakdown?.education ?? null,
+            roleScore: breakdown?.roleAlignment ?? null,
+            recommendation: c.recommendation ?? (c.matchScore === null ? 'NOT_ANALYZED' : 'POTENTIAL_MATCH'),
+            reasoning: c.recommendationReasoning ?? (
+              c.matchScore === null
+                ? 'No AI CV analysis has been run for this candidate. Treat the CV as un-assessed, not as weak.'
+                : ''
+            ),
             strengths: c.strengths,
             gaps: c.gaps,
             concerns: c.concerns,
@@ -251,13 +260,26 @@ export async function generateDecisionBriefService(input: {
       },
     }
   } catch (err) {
+    // The structured details matter: a `SchemaValidationError` carries
+    // the Zod issues that the corrective retry was built from. Flattening
+    // it to a message string throws away exactly the information the
+    // reviewer (and the next retry) needs.
+    const isAiError = err instanceof AIEngineError
+    const details =
+      err instanceof SchemaValidationError
+        ? { code: err.code, issues: err.issues }
+        : err instanceof Error
+          ? { message: err.message }
+          : { message: String(err) }
     return {
       ok: false,
       error: {
-        code: 'INTERNAL',
-        message: 'Failed to generate Decision Brief.',
-        retryable: true,
-        details: err instanceof Error ? err.message : String(err),
+        code: isAiError ? err.code : 'INTERNAL',
+        message: isAiError
+          ? err.message
+          : 'Failed to generate Decision Brief.',
+        retryable: isAiError ? err.retryable : true,
+        details,
       },
     }
   }

@@ -36,7 +36,6 @@ import { useRouter } from 'next/navigation'
 import {
   parseCsvAction,
   importCandidatesAction,
-  type ParsedCsvRow,
   type CsvParseResult,
 } from '../import-csv-actions'
 
@@ -44,6 +43,10 @@ interface HiringRequestOption {
   id: string
   title: string
 }
+
+/** The success branch of `CsvParseResult` — the modal only ever holds a
+ *  parsed preview, never the failure shape (which goes to `error`). */
+type CsvParseSuccess = Extract<CsvParseResult, { ok: true }>
 
 interface ImportCsvModalProps {
   open: boolean
@@ -65,7 +68,7 @@ export function ImportCsvModal({
     defaultHiringRequestId ?? hiringRequests[0]?.id ?? '',
   )
   const [file, setFile] = useState<File | null>(null)
-  const [parsed, setParsed] = useState<CsvParseResult | null>(null)
+  const [parsed, setParsed] = useState<CsvParseSuccess | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const [importing, setImporting] = useState(false)

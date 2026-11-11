@@ -36,6 +36,8 @@ import {
   ShieldCheckIcon,
   DatabaseIcon,
   RefreshCwIcon,
+  DownloadIcon,
+  UserRoundIcon,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
@@ -44,6 +46,10 @@ import {
   executeDataCleanupAction,
   previewBusinessResetAction,
   executeBusinessResetAction,
+  listRightsCandidatesAction,
+  previewCandidateRightsAction,
+  exportCandidateDataAction,
+  eraseCandidateDataAction,
 } from '../actions'
 
 export function DataManagementPage() {
@@ -247,7 +253,7 @@ function DataManagementPageInner() {
             <RefreshCwIcon className="h-5 w-5" /> Reset Talent Data (Destructive)
           </CardTitle>
           <CardDescription>
-            Removes ALL operational data in this organization: hiring requests, candidates, interviews, decisions, offers, activities, AI tasks, AI conversations, copilot confirmations, and job descriptions. Use this to start fresh before go-live or after a pilot.
+            Removes ALL operational data in this organization: hiring requests, candidates, applications, interviews, decisions, offers, activities, AI tasks, AI conversations, copilot confirmations, CV files (including the stored originals), candidate-addressed mail rows, and job descriptions. Use this to start fresh before go-live or after a pilot.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -265,6 +271,9 @@ function DataManagementPageInner() {
               <Stat label="AI Conversations" value={resetPreview.toDelete.aiConversations} />
               <Stat label="Copilot Confirms" value={resetPreview.toDelete.copilotConfirmations} />
               <Stat label="Job Descriptions" value={resetPreview.toDelete.jobDescriptions} />
+              <Stat label="Applications" value={resetPreview.toDelete.applications} />
+              <Stat label="CV Files" value={resetPreview.toDelete.cvFiles} />
+              <Stat label="Email Rows" value={resetPreview.toDelete.emailMessages} />
             </div>
             <div className="mt-3 border-t border-red-200 pt-3 text-xs text-red-800 dark:border-red-900/40 dark:text-red-300">
               <strong>Always preserved:</strong> Organization, current ADMIN, {resetPreview.preserved.totalUsers} user accounts, {resetPreview.preserved.departments} departments, {resetPreview.preserved.promptTemplates} prompt templates, {resetPreview.preserved.auditLogs} audit log entries.
@@ -297,7 +306,205 @@ function DataManagementPageInner() {
           )}
         </CardContent>
       </Card>
+
+      <DataRightsCard />
     </div>
+  )
+}
+
+/**
+ * Data rights (audit P2-13) — access and erasure for ONE candidate.
+ *
+ * The org-wide reset above is the wrong tool for a data-subject request:
+ * it wipes every requisition and every public posting in the tenant. This
+ * card is the per-person path — export everything we hold about a
+ * candidate, or erase that candidate (including their CV bytes) without
+ * touching anybody else.
+ */
+function DataRightsCard() {
+  const router = useRouter()
+  const [candidates, setCandidates] = useState<Array<{ id: string; name: string; email: string; stage: string }>>([])
+  const [selected, setSelected] = useState('')
+  const [preview, setPreview] = useState<any>(null)
+  const [confirmText, setConfirmText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listRightsCandidatesAction()
+      .then(res => {
+        if (res.ok) setCandidates(res.data ?? [])
+        else setError(res.error?.message ?? 'Failed to load candidates')
+      })
+      .catch(() => setError('Failed to load candidates'))
+  }, [])
+
+  function loadPreview(candidateId: string) {
+    setPreview(null)
+    setMessage(null)
+    setError(null)
+    if (!candidateId) return
+    setBusy(true)
+    previewCandidateRightsAction(candidateId)
+      .then(res => {
+        if (res.ok) setPreview(res.data)
+        else setError(res.error?.message ?? 'Failed to load the data inventory')
+      })
+      .finally(() => setBusy(false))
+  }
+
+  function exportData() {
+    if (!selected) return
+    setBusy(true)
+    setError(null)
+    exportCandidateDataAction(selected)
+      .then(res => {
+        if (!res.ok) {
+          setError(res.error?.message ?? 'Export failed')
+          return
+        }
+        const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `candidate-export-${selected}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        setMessage('Export downloaded.')
+      })
+      .finally(() => setBusy(false))
+  }
+
+  function erase() {
+    if (!selected) return
+    setBusy(true)
+    setError(null)
+    eraseCandidateDataAction(selected, confirmText)
+      .then(res => {
+        if (!res.ok) {
+          setError(res.error?.message ?? 'Erasure failed')
+          return
+        }
+        setMessage(
+          `Erased ${res.data.candidateName}: ${res.data.removed.candidate} candidate row, ` +
+            `${res.data.removed.cvFiles} CV record(s), ${res.data.removed.storedFiles} stored file(s), ` +
+            `${res.data.removed.emailMessages} email row(s).`,
+        )
+        setConfirmText('')
+        setPreview(null)
+        listRightsCandidatesAction().then(r => {
+          if (r.ok) setCandidates(r.data ?? [])
+        })
+        router.refresh()
+      })
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UserRoundIcon className="h-5 w-5" /> Candidate data rights
+        </CardTitle>
+        <CardDescription>
+          Answer a data-subject request for one candidate: export everything
+          we hold about them, or erase them (and their CV files) without
+          touching the rest of the organization. The candidate&apos;s requisition
+          and the audit trail are kept.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300">
+            {error}
+          </div>
+        )}
+        {message && (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200">
+            {message}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            value={selected}
+            onChange={e => {
+              setSelected(e.target.value)
+              loadPreview(e.target.value)
+            }}
+            className="h-10 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800"
+            aria-label="Candidate"
+          >
+            <option value="">Select a candidate…</option>
+            {candidates.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {c.email} ({c.stage})
+              </option>
+            ))}
+          </select>
+          <Button variant="outline" onClick={exportData} disabled={!selected || busy}>
+            <DownloadIcon className="h-4 w-4" /> Export data
+          </Button>
+        </div>
+
+        {busy && (
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <LoaderIcon className="h-4 w-4 animate-spin" /> Working…
+          </p>
+        )}
+
+        {preview && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+            <div className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {preview.candidate.name} · {preview.candidate.email} · {preview.candidate.stage}
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs md:grid-cols-4">
+              <Stat label="Applications" value={preview.willDelete.applications} />
+              <Stat label="CV records" value={preview.willDelete.cvFiles} />
+              <Stat label="Stored CV files" value={preview.willDelete.cvFilesWithStoredBytes} />
+              <Stat label="Interviews" value={preview.willDelete.interviews} />
+              <Stat label="Decisions" value={preview.willDelete.decisions} />
+              <Stat label="Offers" value={preview.willDelete.offers} />
+              <Stat label="Activities" value={preview.willDelete.activities} />
+              <Stat label="Email rows" value={preview.willDelete.emailMessages} />
+            </div>
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              Retained: {preview.retained.hiringRequest} (requisition) and{' '}
+              {preview.retained.auditLogs} audit log entr
+              {preview.retained.auditLogs === 1 ? 'y' : 'ies'}.
+            </p>
+
+            <div className="mt-4 rounded-lg border-2 border-red-300 bg-red-50 p-3 dark:border-red-900/40 dark:bg-red-950/20">
+              <p className="mb-2 text-xs text-red-800 dark:text-red-300">
+                Erasure is permanent. To confirm, type{' '}
+                <code className="rounded bg-white px-1.5 py-0.5 font-mono text-red-900 dark:bg-slate-800 dark:text-red-200">
+                  ERASE CANDIDATE
+                </code>{' '}
+                below.
+              </p>
+              <input
+                value={confirmText}
+                onChange={e => setConfirmText(e.target.value)}
+                placeholder="ERASE CANDIDATE"
+                className="h-10 w-full rounded-md border border-red-300 bg-white px-3 text-sm font-mono focus:border-red-500 focus:outline-none dark:border-red-700 dark:bg-slate-800"
+              />
+              <div className="mt-3 flex justify-end">
+                <Button
+                  variant="destructive"
+                  disabled={busy || confirmText.trim() !== 'ERASE CANDIDATE'}
+                  onClick={erase}
+                >
+                  <Trash2Icon className="h-4 w-4" /> Erase candidate
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

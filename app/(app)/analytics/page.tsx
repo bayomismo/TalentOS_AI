@@ -112,7 +112,8 @@ export default function AnalyticsPage() {
         <>
           <p className="-mt-4 text-xs text-slate-500 dark:text-slate-400">
             {data.candidateCount} candidate{data.candidateCount === 1 ? '' : 's'} ·{' '}
-            {data.offerCount} offer{data.offerCount === 1 ? '' : 's'} tracked
+            {data.funnelTotal} in the funnel · {data.offerCount} offer{data.offerCount === 1 ? '' : 's'}{' '}
+            tracked
           </p>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -155,7 +156,9 @@ export default function AnalyticsPage() {
               <CardHeader>
                 <CardTitle>Hiring funnel</CardTitle>
                 <CardDescription>
-                  How candidates move through each stage of your pipeline.
+                  Each candidate is counted once, in the furthest stage they
+                  reached. Rejected and withdrawn candidates have left the
+                  pipeline and are not counted.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -198,7 +201,7 @@ export default function AnalyticsPage() {
               <CardContent className="space-y-4">
                 {data.hiresByTeam.length === 0 ? (
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    No hires yet. Close a candidate to see team-level distribution.
+                    No hires yet. Hire a candidate to see team-level distribution.
                   </p>
                 ) : (
                   data.hiresByTeam.map(t => (

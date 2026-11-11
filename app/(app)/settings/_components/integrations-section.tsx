@@ -21,17 +21,24 @@ export type IntegrationsStatus = {
   google: GoogleStatus
 }
 
-export async function getIntegrationsStatusAction(): Promise<{
-  ok: true
-  data: IntegrationsStatus
-} | { ok: false; error: string }> {
+/** Standard action failure shape used across the app. */
+export type IntegrationsActionFailure = {
+  ok: false
+  error: { code: string; message: string; retryable: boolean }
+}
+
+export async function getIntegrationsStatusAction(): Promise<
+  { ok: true; data: IntegrationsStatus } | IntegrationsActionFailure
+> {
   const auth = await requirePermission('settings.manage')
   if (!auth.ok) return toActionFailure(auth)
   const status = await getGoogleStatus(auth.data.organizationId)
   return { ok: true, data: { google: status } }
 }
 
-export async function disconnectGoogleAction(): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function disconnectGoogleAction(): Promise<
+  { ok: true } | IntegrationsActionFailure
+> {
   const auth = await requirePermission('settings.manage')
   if (!auth.ok) return toActionFailure(auth)
   await disconnectGoogle(auth.data.organizationId)

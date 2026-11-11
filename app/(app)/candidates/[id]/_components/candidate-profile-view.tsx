@@ -17,6 +17,7 @@ import {
   CheckCircle2Icon,
   ClockIcon,
   ClipboardListIcon,
+  DownloadIcon,
   FileTextIcon,
   GraduationCapIcon,
   MailIcon,
@@ -29,6 +30,7 @@ import {
   ThumbsDownIcon,
   ThumbsUpIcon,
   TrendingUpIcon,
+  XCircleIcon,
 } from 'lucide-react'
 
 import { PageHeader } from '@/components/shared/page-header'
@@ -37,12 +39,54 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { getCandidateDetailAction, type CandidateDetail, type MatchAnalysisBlock } from '../actions'
 import { OfferSection } from '@/features/offers/components/offer-section'
+import {
+  getCandidateProfileContextAction,
+  type CandidateProfileContext,
+} from '@/lib/storage/actions'
 import { cn } from '@/lib/utils'
 
 const STAGE_ORDER = ['applied', 'screening', 'interview', 'offer', 'hired'] as const
 
+/** The UI stage values the status badge understands. */
+type BadgeStage =
+  | 'applied'
+  | 'screening'
+  | 'interview'
+  | 'offer'
+  | 'hired'
+  | 'rejected'
+  | 'withdrawn'
+
+/**
+ * Maps a raw pipeline stage (`ApplicationStage`) to the badge value.
+ *
+ * Audit P2-01: REJECTED and WITHDRAWN are terminal stages with their own
+ * meaning. They must never be rendered as "Applied".
+ */
+function toBadgeStage(raw: string | null | undefined): BadgeStage | null {
+  switch ((raw ?? '').toUpperCase()) {
+    case 'APPLIED':
+      return 'applied'
+    case 'SCREENING':
+      return 'screening'
+    case 'INTERVIEW':
+      return 'interview'
+    case 'OFFER':
+      return 'offer'
+    case 'HIRED':
+      return 'hired'
+    case 'REJECTED':
+      return 'rejected'
+    case 'WITHDRAWN':
+      return 'withdrawn'
+    default:
+      return null
+  }
+}
+
 export function CandidateProfileView({ id }: { id: string }) {
   const [candidate, setCandidate] = useState<CandidateDetail | null | undefined>(undefined)
+  const [cvContext, setCvContext] = useState<CandidateProfileContext | null>(null)
   const [comingSoon, setComingSoon] = useState<
     | { title: string; description: string }
     | null
@@ -54,6 +98,12 @@ export function CandidateProfileView({ id }: { id: string }) {
       try {
         const result = await getCandidateDetailAction(id)
         setCandidate(result)
+        if (result) {
+          // The CV documents (parsed text + a resolvable download URL) are
+          // read through a dedicated action so the recruiter can finally
+          // read the CV that was uploaded (audit P0-04).
+          setCvContext(await getCandidateProfileContextAction(id))
+        }
       } catch (err) {
         console.error('[candidate-profile] failed to load candidate', err)
         setCandidate(null)
@@ -97,9 +147,37 @@ export function CandidateProfileView({ id }: { id: string }) {
     )
   }
 
-  const stageIndex = STAGE_ORDER.indexOf(candidate.stage as (typeof STAGE_ORDER)[number])
+  // The raw pipeline stage (read from the database) wins over the payload's
+  // mapped stage, so a REJECTED / WITHDRAWN candidate is never rendered as
+  // "Applied" (audit P2-01).
+  const rawStage = cvContext?.stage ?? candidate.stage
+  const badgeStage: BadgeStage = toBadgeStage(rawStage) ?? 'applied'
+  const isTerminal = badgeStage === 'rejected' || badgeStage === 'withdrawn'
+  const stageIndex = STAGE_ORDER.indexOf(badgeStage as (typeof STAGE_ORDER)[number])
   const safeStageIndex = stageIndex === -1 ? 0 : stageIndex
   const firstName = candidate.name.split(' ')[0] ?? candidate.name
+
+  // The CV list comes from the detail payload until the CV context (parsed
+  // text + download URL) has loaded.
+  const cvFiles: Array<{
+    id: string
+    fileName: string
+    fileType: string
+    fileSize: number
+    uploadedAt: string
+    downloadUrl: string | null
+    parsedText: string | null
+  }> =
+    cvContext?.cvFiles ??
+    candidate.cvFiles.map(f => ({
+      id: f.id,
+      fileName: f.fileName,
+      fileType: f.fileType,
+      fileSize: f.fileSize,
+      uploadedAt: f.uploadedAt,
+      downloadUrl: null,
+      parsedText: null,
+    }))
 
   return (
     <div className="space-y-8 p-8">
@@ -114,7 +192,7 @@ export function CandidateProfileView({ id }: { id: string }) {
       <PageHeader
         title={candidate.name}
         description={`${candidate.position} · ${candidate.email}`}
-        badge={<StatusBadge stage={candidate.stage} />}
+        badge={<StatusBadge stage={badgeStage} />}
         actions={
           <>
             <Button
@@ -262,10 +340,60 @@ export function CandidateProfileView({ id }: { id: string }) {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {isTerminal && (
+                <div
+                  className={cn(
+                    'mb-4 flex items-start gap-3 rounded-lg border p-4',
+                    badgeStage === 'rejected'
+                      ? 'border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/20'
+                      : 'border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800/40',
+                  )}
+                >
+                  <XCircleIcon
+                    className={cn(
+                      'h-5 w-5 flex-shrink-0',
+                      badgeStage === 'rejected'
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-slate-500 dark:text-slate-400',
+                    )}
+                    aria-hidden
+                  />
+                  <div>
+                    <p
+                      className={cn(
+                        'text-sm font-semibold',
+                        badgeStage === 'rejected'
+                          ? 'text-rose-900 dark:text-rose-200'
+                          : 'text-slate-800 dark:text-slate-100',
+                      )}
+                    >
+                      {badgeStage === 'rejected'
+                        ? `${firstName} was rejected`
+                        : `${firstName} withdrew`}
+                    </p>
+                    <p
+                      className={cn(
+                        'mt-1 text-xs',
+                        badgeStage === 'rejected'
+                          ? 'text-rose-700 dark:text-rose-300'
+                          : 'text-slate-500 dark:text-slate-400',
+                      )}
+                    >
+                      {badgeStage === 'rejected' && cvContext?.rejectedAt
+                        ? `Rejected on ${new Date(cvContext.rejectedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.`
+                        : null}
+                      {badgeStage === 'withdrawn' && cvContext?.withdrawnAt
+                        ? `Withdrawn on ${new Date(cvContext.withdrawnAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.`
+                        : null}
+                      This candidate is no longer in the active pipeline.
+                    </p>
+                  </div>
+                </div>
+              )}
               <ol className="grid grid-cols-1 gap-2 md:grid-cols-5">
                 {STAGE_ORDER.map((stage, idx) => {
                   const reached = idx <= safeStageIndex
-                  const current = idx === safeStageIndex
+                  const current = idx === safeStageIndex && !isTerminal
                   return (
                     <li
                       key={stage}
@@ -453,29 +581,62 @@ export function CandidateProfileView({ id }: { id: string }) {
             </Card>
           )}
 
-          {/* Source CV */}
-          {candidate.cvFiles.length > 0 && (
+          {/* Source CV — audit P0-04.
+              The parsed text is what a recruiter actually reads, and the
+              original bytes are downloadable when they were retained. */}
+          {cvFiles.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle>Source CV</CardTitle>
-                <CardDescription>The CV used to create this candidate.</CardDescription>
+                <CardDescription>
+                  The CV this candidate was created from — read the parsed text
+                  below instead of asking the candidate to resend it.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {candidate.cvFiles.map(f => (
-                  <div
-                    key={f.id}
-                    className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-700 dark:bg-slate-800/40"
-                  >
-                    <FileTextIcon className="h-4 w-4 text-slate-500" aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-slate-900 dark:text-slate-50">
-                        {f.fileName}
-                      </p>
-                      <p className="text-slate-500 dark:text-slate-400">
-                        {f.fileType} · {(f.fileSize / 1024).toFixed(1)} KB ·{' '}
-                        {new Date(f.uploadedAt).toLocaleDateString()}
-                      </p>
+              <CardContent className="space-y-4">
+                {cvFiles.map(f => (
+                  <div key={f.id} className="space-y-3">
+                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-700 dark:bg-slate-800/40">
+                      <FileTextIcon className="h-4 w-4 text-slate-500" aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-slate-900 dark:text-slate-50">
+                          {f.fileName}
+                        </p>
+                        <p className="text-slate-500 dark:text-slate-400">
+                          {f.fileType} · {(f.fileSize / 1024).toFixed(1)} KB ·{' '}
+                          {new Date(f.uploadedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {f.downloadUrl ? (
+                        <a
+                          href={f.downloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-medium text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                        >
+                          <DownloadIcon className="h-3.5 w-3.5" aria-hidden />
+                          Original
+                        </a>
+                      ) : (
+                        <span className="rounded-md bg-amber-50 px-2 py-1 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                          Original not retained
+                        </span>
+                      )}
                     </div>
+                    {f.parsedText ? (
+                      <details className="rounded-lg border border-slate-200 dark:border-slate-700">
+                        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100">
+                          CV text
+                        </summary>
+                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words border-t border-slate-200 px-3 py-2 text-xs leading-relaxed text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                          {f.parsedText}
+                        </pre>
+                      </details>
+                    ) : (
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        No text could be extracted from this file.
+                      </p>
+                    )}
                   </div>
                 ))}
               </CardContent>

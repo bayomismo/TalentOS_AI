@@ -40,8 +40,8 @@ export function MarketingWhy() {
             <div className="mt-8 space-y-5">
               <TrustRow
                 icon={<EyeOffIcon className="h-4 w-4" />}
-                title="Compensation never reaches the AI"
-                body="Salary, equity, and comp data are stripped from candidate records before any AI call. The model can't bias on what it can't see."
+                title="Compensation never reaches the scoring AI"
+                body="Salary, equity, and comp data are stripped from candidate records before any AI call that scores, ranks, or briefs a candidate. The model can't bias on what it can't see. The one exception is the offer-letter draft, where the terms of that specific offer have to appear in the letter itself."
               />
               <TrustRow
                 icon={<ScaleIcon className="h-4 w-4" />}

@@ -120,4 +120,6 @@ function main() {
   console.log(`========== ${pass} pass, ${fail} fail ==========`)
   if (fail > 0) process.exit(1)
 }
-main().catch(console.error)
+// `main` is synchronous and returns void — there is no promise to chain.
+// A throw inside it propagates and sets a non-zero exit code on its own.
+main()

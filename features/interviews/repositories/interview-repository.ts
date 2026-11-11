@@ -54,8 +54,35 @@ export async function listInterviewsForCandidate(candidateId: string) {
   })
 }
 
-export async function listAllInterviewsForCenter() {
+/**
+ * Audit P2-21 — the Interview Center used to call
+ * `db.interview.findMany()` with NO `where` clause: every interview of
+ * every tenant was pulled into the server process, with participants and
+ * evaluation scores, and the tenant filter was then applied in
+ * application code.
+ *
+ * The OUTPUT was always correctly scoped (it was a hygiene/perf smell,
+ * not a live disclosure), but the cross-tenant rows should never have
+ * been read in the first place. The filter now lives in the query:
+ *
+ *   - `organizationId` — the caller's tenant.
+ *   - `participants: { some: { userId } }` — the PART 11 resource scope
+ *     for an INTERVIEWER, who only sees the interviews they are on.
+ */
+export interface ListInterviewsForCenterParams {
+  organizationId: string
+  /** Restrict to interviews the given user participates in (PART 11). */
+  participantUserId?: string | null
+}
+
+export async function listInterviewsForCenter(params: ListInterviewsForCenterParams) {
   return db.interview.findMany({
+    where: {
+      organizationId: params.organizationId,
+      ...(params.participantUserId
+        ? { participants: { some: { userId: params.participantUserId } } }
+        : {}),
+    },
     include: {
       candidate: { select: { firstName: true, lastName: true } },
       hiringRequest: { select: { title: true } },
@@ -122,14 +149,17 @@ export async function createInterview(data: CreateInterviewInput) {
 
 export async function updateInterviewKit(
   interviewId: string,
-  data: { type: InterviewType; durationMinutes: number; scheduledAt: Date; kitSnapshot: unknown }
+  data: { type: InterviewType; durationMinutes: number; scheduledAt?: Date; kitSnapshot: unknown }
 ) {
   return db.interview.update({
     where: { id: interviewId },
     data: {
       type: data.type,
       durationMinutes: data.durationMinutes,
-      scheduledAt: data.scheduledAt,
+      // Sprint 19 (audit P2-19) — the slot only moves when the caller
+      // explicitly asks for a new time. Regenerating the AI kit must not
+      // reschedule the interview.
+      ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       kitSnapshot: data.kitSnapshot as object,
     },
     include: { questions: true },
@@ -186,13 +216,6 @@ export async function upsertParticipant(
   })
 }
 
-export async function markInterviewStarted(interviewId: string, startedAt: Date) {
-  return db.interview.update({
-    where: { id: interviewId },
-    data: { startedAt, status: 'IN_PROGRESS' },
-  })
-}
-
 export async function markInterviewQuestionAsked(
   questionId: string,
   askedAt: Date | null,
@@ -207,9 +230,33 @@ export async function markInterviewQuestionAsked(
   })
 }
 
-export async function markInterviewCompleted(interviewId: string) {
-  return db.interview.update({
-    where: { id: interviewId },
-    data: { status: 'COMPLETED', completedAt: new Date() },
+/**
+ * Audit P1-05 — a tenant-scoped fetch of one interview, WITH the
+ * foreign-key tenant filters.
+ *
+ * `organizationId` on the interview row alone is not enough: the
+ * interview points at a candidate and a hiring request, and both carry
+ * their own `organizationId`. A row whose parent belongs to another
+ * tenant is a data-integrity problem, and the caller must not act on it.
+ *
+ * The query therefore asserts that the interview, its candidate and its
+ * hiring request all belong to `organizationId`.
+ */
+export async function findInterviewForOrg(
+  interviewId: string,
+  organizationId: string
+) {
+  return db.interview.findFirst({
+    where: {
+      id: interviewId,
+      organizationId,
+      candidate: { organizationId },
+      hiringRequest: { organizationId },
+    },
+    include: {
+      candidate: { select: { id: true, organizationId: true, firstName: true, lastName: true } },
+      hiringRequest: { select: { id: true, organizationId: true } },
+      participants: { select: { userId: true } },
+    },
   })
 }

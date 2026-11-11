@@ -8,7 +8,9 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
+import { allowedNextStages, isTerminalApplicationStage } from '@/lib/candidates/state-machine'
+import type { ApplicationStage } from '@prisma/client'
 
 export interface MatchAnalysisBlock {
   overallScore: number
@@ -117,13 +119,29 @@ export interface CandidateDetail {
   hiringRequestId: string
   /** Sprint 8: AI match score for readiness display. */
   matchScore: number | null
+  /**
+   * True when the candidate is in a terminal stage (HIRED, REJECTED,
+   * WITHDRAWN). Audit P0-10 — a terminal candidate is finished and must
+   * not be presented as advanceable.
+   */
+  terminal: boolean
+  /**
+   * The stages this candidate may legally move to next, computed on the
+   * server from the candidate state machine (audit P0-09).
+   */
+  allowedNextStages: ApplicationStage[]
 }
 
 export async function getCandidateDetailAction(id: string): Promise<CandidateDetail | null> {
   // Sprint 9 PART 6: candidate detail is tenant-scoped. Returns null if
   // the candidate does not exist OR belongs to another organization
   // (PART 21: do not leak cross-tenant resource existence).
-  const auth = await requireAuth()
+  // Sprint 19 — `requirePermission('candidate.view')`, not a bare
+  // `requireAuth()`: the candidate profile is a candidate read, and the
+  // permission registry (not a hand-rolled role list) decides who may
+  // see it. The query below is still tenant-scoped, so a cross-tenant id
+  // resolves to null rather than another organization's candidate.
+  const auth = await requirePermission('candidate.view')
   if (!auth.ok) return null
   const orgId = auth.data.organizationId
   const c = await db.candidate.findFirst({
@@ -171,6 +189,8 @@ export async function getCandidateDetailAction(id: string): Promise<CandidateDet
     phone: c.phone,
     position: c.hiringRequest.title,
     stage: c.stage.toLowerCase() as CandidateDetail['stage'],
+    terminal: isTerminalApplicationStage(c.stage),
+    allowedNextStages: [...allowedNextStages(c.stage)],
     rating: c.rating,
     source: c.source,
     appliedAt: c.appliedAt.toISOString(),

@@ -21,8 +21,17 @@ export interface AuditLogInput {
 
 /**
  * Records an audit event. Never throws — audit failures should not break
- * the user-facing request. We do log to console.error so we can monitor
- * audit-write failures in production.
+ * the user-facing request, and a business mutation must never be rolled
+ * back because the trail could not be written.
+ *
+ * A failure IS observable: it is reported on stderr with the action and
+ * the target ids, so a dropped audit row shows up in the logs instead of
+ * disappearing. Audit P1-14: the trail used to be written best-effort
+ * with nothing but a swallowed error, so a transient DB failure dropped
+ * the entry while the business change persisted.
+ *
+ * Never logged: the metadata payload, the reason text, tokens, secrets
+ * or request bodies.
  */
 export async function recordAuditLog(input: AuditLogInput): Promise<void> {
   try {
@@ -39,8 +48,18 @@ export async function recordAuditLog(input: AuditLogInput): Promise<void> {
       },
     })
   } catch (err) {
-    // Best-effort. Do not throw.
+    // Best-effort. Do not throw — the business mutation stands.
+    // Only the action and the ids are reported: never the metadata,
+    // never a token, never a request body.
     // eslint-disable-next-line no-console
-    console.error('[audit] failed to write audit log:', err)
+    console.error('[audit] failed to write audit log', {
+      action: input.action,
+      targetType: input.targetType ?? null,
+      targetId: input.targetId ?? null,
+      organizationId: input.organizationId ?? null,
+      actorId: input.actorId ?? null,
+      outcome: input.outcome ?? 'success',
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 }

@@ -1,21 +1,109 @@
 /**
- * Sprint 17.6 — Public application API endpoint.
+ * Sprint 17.6 / Sprint 19 — Public application API endpoint.
  *
  * POST /api/public/apply
  *
  * No auth. Used by the form on /jobs/[slug]/apply. Body is JSON.
  * Forwards to submitPublicApplicationAction.
+ *
+ * Sprint 19 (audit P2-07 / P2-08): the rate-limit key was the FIRST hop
+ * of `x-forwarded-for`, a header the CLIENT controls. Two consequences:
+ * a bot could mint unlimited buckets by rotating the header, and every
+ * applicant behind a shared NAT shared one bucket. The IP below is
+ * derived from headers the PLATFORM sets and overwrites.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { submitPublicApplicationAction } from '@/app/(public)/jobs/[slug]/apply-action'
+import {
+  submitPublicApplicationAction,
+  type SubmitPublicApplicationInput,
+} from '@/app/(public)/jobs/[slug]/apply-action'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+/**
+ * The client IP, as seen by the platform.
+ *
+ * Resolution order — every source below is set by the hosting platform
+ * (Vercel), not by the browser:
+ *
+ *   1. `x-vercel-forwarded-for` — Vercel's own client-IP header. It is
+ *      set by the edge and overwrites anything the client sent.
+ *   2. `x-real-ip` — the reverse proxy's client-IP header.
+ *   3. `x-forwarded-for` — used ONLY as a last resort, and then the
+ *      RIGHT-most hop is taken: the platform APPENDS the real client IP,
+ *      so the first hop is the client-supplied one and must not be
+ *      trusted.
+ *
+ * A missing header yields null; the caller then falls back to a shared
+ * bucket rather than trusting a client value.
+ */
+function serverDerivedClientIp(req: NextRequest): string | null {
+  const platform = req.headers.get('x-vercel-forwarded-for') ?? req.headers.get('x-real-ip')
+  if (platform) {
+    const value = platform.trim()
+    if (value.length > 0) return value
+  }
+
+  const forwarded = req.headers.get('x-forwarded-for')
+  if (forwarded) {
+    const hops = forwarded.split(',')
+    const last = hops[hops.length - 1]?.trim()
+    if (last && last.length > 0) return last
+  }
+
+  return null
+}
+
+/** Reads a string field from an untrusted JSON body. */
+function readString(raw: Record<string, unknown>, key: string): string {
+  const v = raw[key]
+  return typeof v === 'string' ? v : ''
+}
+
+/** Reads an optional string field from an untrusted JSON body. */
+function readOptionalString(raw: Record<string, unknown>, key: string): string | null {
+  const v = raw[key]
+  return typeof v === 'string' && v.length > 0 ? v : null
+}
+
+/** Narrows the untrusted JSON body into the action's input shape. */
+function toSubmitInput(raw: Record<string, unknown>): SubmitPublicApplicationInput {
+  const cvRaw = raw.cv
+  let cv: SubmitPublicApplicationInput['cv'] = null
+  if (cvRaw && typeof cvRaw === 'object' && !Array.isArray(cvRaw)) {
+    const c = cvRaw as Record<string, unknown>
+    const dataBase64 = typeof c.dataBase64 === 'string' ? c.dataBase64 : ''
+    if (dataBase64.length > 0) {
+      cv = {
+        dataBase64,
+        fileName: typeof c.fileName === 'string' ? c.fileName : '',
+        mimeType: typeof c.mimeType === 'string' ? c.mimeType : '',
+      }
+    }
+  }
+
+  return {
+    jobSlug: readString(raw, 'jobSlug'),
+    firstName: readString(raw, 'firstName'),
+    lastName: readString(raw, 'lastName'),
+    email: readString(raw, 'email'),
+    phone: readOptionalString(raw, 'phone'),
+    location: readOptionalString(raw, 'location'),
+    linkedinUrl: readOptionalString(raw, 'linkedinUrl'),
+    portfolioUrl: readOptionalString(raw, 'portfolioUrl'),
+    githubUrl: readOptionalString(raw, 'githubUrl'),
+    coverLetter: readOptionalString(raw, 'coverLetter'),
+    cv,
+    website: readOptionalString(raw, 'website') ?? undefined,
+    consent: typeof raw.consent === 'string' ? raw.consent : undefined,
+  }
+}
+
 export async function POST(req: NextRequest) {
-  let body: Record<string, unknown> = {}
+  let parsedBody: unknown
   try {
-    body = await req.json()
+    parsedBody = await req.json()
   } catch {
     return NextResponse.json(
       { ok: false, error: { code: 'INVALID_INPUT', message: 'Invalid JSON body.' } },
@@ -23,19 +111,27 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    req.headers.get('x-real-ip') ??
-    null
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json(
+      { ok: false, error: { code: 'INVALID_INPUT', message: 'Invalid JSON body.' } },
+      { status: 400 },
+    )
+  }
+
+  const ip = serverDerivedClientIp(req)
   const userAgent = req.headers.get('user-agent')
 
   const result = await submitPublicApplicationAction(
-    body as Parameters<typeof submitPublicApplicationAction>[0],
+    toSubmitInput(parsedBody as Record<string, unknown>),
     { ip, userAgent },
   )
 
   if (result.ok) {
-    return NextResponse.json({ ok: true, candidateId: result.candidateId })
+    return NextResponse.json({
+      ok: true,
+      candidateId: result.candidateId,
+      reapplication: result.reapplication,
+    })
   }
 
   // Map known field errors back to inline UI hints where possible

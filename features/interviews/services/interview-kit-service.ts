@@ -17,6 +17,8 @@ import { db } from '@/lib/db'
 import { getAIEngine } from '@/lib/ai/service/ai-engine'
 import { enforceAiQuota, recordAiUsage } from '@/lib/ai/quota'
 import { getEventBus } from '@/lib/events'
+import { ApplicationStage } from '@prisma/client'
+import { transitionCandidateStage } from '@/lib/candidates/transition'
 import { interviewKitOutputSchema, type InterviewKitOutput } from '@/lib/ai/schemas/interview-kit.schema'
 import type { GenerateInterviewKitInput, InterviewKitView } from '../types'
 import { kitQuestionToView, resolveInterviewType, scorecardSnapshotToView } from '../mappers/interview-mappers'
@@ -253,10 +255,17 @@ export async function generateInterviewKitService(
         kitSnapshot: kit,
       })
     } else {
+      // Audit P2-19 — regenerating the kit must NOT move the interview.
+      //
+      // The old code passed the default slot (`now + 7 days`) into the
+      // update, so a recruiter who refreshed the AI kit silently moved a
+      // scheduled interview a week out. The slot now only changes when
+      // the caller explicitly asks for a new time.
+      const rescheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : undefined
       interview = await updateInterviewKit(interview.id, {
         type: interviewType,
         durationMinutes,
-        scheduledAt,
+        ...(rescheduledAt ? { scheduledAt: rescheduledAt } : {}),
         kitSnapshot: kit,
       })
       await deleteAllQuestionsForInterview(interview.id)
@@ -323,39 +332,55 @@ export async function generateInterviewKitService(
       payload: { activity: activitySnapshot({ ...activity, occurredAt: activity.occurredAt }) },
     })
 
+    // -----------------------------------------------------------------------
+    // Audit P1-09 / P2-03 — the stage write is a RAW `db.candidate.update`.
+    //
+    // That bypassed the candidate state machine entirely: an AI-triggered
+    // action could move a candidate to any stage, and a terminal candidate
+    // could be "revived" by generating an interview kit. The write now
+    // goes through the shared transition helper, so it is validated and
+    // the Application mirror stays in step. The AI recommends; the
+    // transition helper decides whether the move is legal.
+    // -----------------------------------------------------------------------
     if (!isReschedule && previousStatus === undefined && candidate.stage === 'SCREENING') {
-      await db.candidate.update({
-        where: { id: candidate.id },
-        data: { stage: 'INTERVIEW' },
-      })
-      const stageActivity = await db.activity.create({
-        data: {
-          organizationId: candidate.organizationId,
-          type: 'CANDIDATE_MOVED',
+      const moved = await db.$transaction(async (tx) =>
+        transitionCandidateStage(tx, {
+          candidateId: candidate.id,
+          toStage: ApplicationStage.INTERVIEW,
           actorId,
-          candidateId: candidate.id,
-          hiringRequestId: candidate.hiringRequestId,
-          title: `Candidate moved to INTERVIEW`,
-          description: `Auto-advanced from SCREENING after the interview kit was generated.`,
-          metadata: { fromStage: 'SCREENING', toStage: 'INTERVIEW', trigger: 'INTERVIEW_KIT_GENERATED' },
-        },
-      })
-      bus.publish({
-        type: 'CandidateStageChanged',
-        payload: {
-          candidateId: candidate.id,
-          hiringRequestId: candidate.hiringRequestId,
-          fullName: `${candidate.firstName} ${candidate.lastName}`,
-          fromStage: 'SCREENING',
-          toStage: 'INTERVIEW',
-          changedAt: new Date().toISOString(),
-          actorName: null,
-        },
-      })
-      bus.publish({
-        type: 'ActivityRecorded',
-        payload: { activity: activitySnapshot({ ...stageActivity, occurredAt: stageActivity.occurredAt }) },
-      })
+          reason: 'Interview kit generated.',
+        }),
+      )
+      if (moved.ok) {
+        const stageActivity = await db.activity.create({
+          data: {
+            organizationId: candidate.organizationId,
+            type: 'CANDIDATE_MOVED',
+            actorId,
+            candidateId: candidate.id,
+            hiringRequestId: candidate.hiringRequestId,
+            title: `Candidate moved to INTERVIEW`,
+            description: `Advanced from SCREENING after the interview kit was generated.`,
+            metadata: { fromStage: 'SCREENING', toStage: 'INTERVIEW', trigger: 'INTERVIEW_KIT_GENERATED' },
+          },
+        })
+        bus.publish({
+          type: 'CandidateStageChanged',
+          payload: {
+            candidateId: candidate.id,
+            hiringRequestId: candidate.hiringRequestId,
+            fullName: `${candidate.firstName} ${candidate.lastName}`,
+            fromStage: 'SCREENING',
+            toStage: 'INTERVIEW',
+            changedAt: new Date().toISOString(),
+            actorName: null,
+          },
+        })
+        bus.publish({
+          type: 'ActivityRecorded',
+          payload: { activity: activitySnapshot({ ...stageActivity, occurredAt: stageActivity.occurredAt }) },
+        })
+      }
     }
 
     const view = await buildInterviewKitView(interview!.id)

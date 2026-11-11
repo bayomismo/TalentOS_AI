@@ -1,13 +1,24 @@
 /**
- * Sprint 17.6 — Post-application thanks page.
+ * Sprint 17.6 / Sprint 19 — Post-application thanks page.
  *
  * Shown after a candidate successfully submits an application. Public.
  * Soft-pitches "track future applications" via a free TalentOS sign-up.
+ *
+ * Sprint 19 (audit P0-03 / P2-23):
+ *   · the page used to promise "we will reach out by email" whether or
+ *     not a delivery provider was configured. With no provider, every
+ *     email in the product is queued in the local outbox and nobody
+ *     receives it — so the promise is now conditional on the real
+ *     delivery state.
+ *   · the footer linked to the vendor's production host on every other
+ *     deployment; it is now derived from the deployment itself.
  */
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2Icon, SparklesIcon, MailIcon } from 'lucide-react'
+import { CheckCircle2Icon, SparklesIcon, MailIcon, BellIcon } from 'lucide-react'
 import { db } from '@/lib/db'
+import { isEmailDeliveryConfigured } from '@/lib/email'
+import { absoluteUrl } from '@/app/(public)/_lib/origin'
 
 export const metadata = {
   title: 'Application submitted · TalentOS',
@@ -34,6 +45,10 @@ export default async function AppliedPage({
   const job = await getJob(slug)
   if (!job) notFound()
 
+  // P0-03: only promise email contact when email is actually delivered.
+  const emailDeliveryConfigured = isEmailDeliveryConfigured()
+  const appOrigin = await absoluteUrl('/')
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       <main className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center px-6 py-10 text-center">
@@ -43,7 +58,7 @@ export default async function AppliedPage({
         </div>
 
         <h1 className="mt-6 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl dark:text-white">
-          You're all set!
+          You&apos;re all set!
         </h1>
 
         <p className="mt-4 text-base leading-relaxed text-slate-600 dark:text-slate-300">
@@ -62,15 +77,30 @@ export default async function AppliedPage({
           </h2>
           <ul className="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-200">
             <li className="flex items-start gap-2">
-              <MailIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              {emailDeliveryConfigured ? (
+                <MailIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <BellIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              )}
               <span>
-                <strong>{job.organization.name}</strong> will review your application and reach out by email.
+                {emailDeliveryConfigured ? (
+                  <>
+                    <strong>{job.organization.name}</strong> will review your application and reach out by
+                    email.
+                  </>
+                ) : (
+                  <>
+                    <strong>{job.organization.name}</strong> will review your application in their
+                    workspace. Email notifications are not currently enabled on this site, so please use
+                    the email address you applied with if you need to follow up.
+                  </>
+                )}
               </span>
             </li>
             <li className="flex items-start gap-2">
               <SparklesIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
               <span>
-                If your profile matches what they're looking for, they'll schedule an interview.
+                If your profile matches what they&apos;re looking for, they&apos;ll schedule an interview.
               </span>
             </li>
             <li className="flex items-start gap-2">
@@ -100,7 +130,7 @@ export default async function AppliedPage({
 
         <p className="mt-10 text-xs text-slate-500 dark:text-slate-400">
           Powered by{' '}
-          <a href="https://talentos-ai-lime.vercel.app" className="hover:underline">
+          <a href={appOrigin} className="hover:underline">
             TalentOS
           </a>
         </p>

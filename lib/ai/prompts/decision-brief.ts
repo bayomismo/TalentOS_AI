@@ -24,11 +24,16 @@ export interface DecisionBriefCandidateInput {
     workExperience?: Array<{ company: string; title: string; period?: string }>
   }
   cvMatchAnalysis: {
-    overallScore: number
-    skillsScore: number
-    experienceScore: number
-    educationScore: number
-    roleScore: number
+    /**
+     * `null` means the CV analysis has NOT been run. It must never be
+     * encoded as `0`: a reviewer must not read "no analysis yet" as
+     * "terrible candidate" (audit P2-16).
+     */
+    overallScore: number | null
+    skillsScore: number | null
+    experienceScore: number | null
+    educationScore: number | null
+    roleScore: number | null
     recommendation: string
     reasoning: string
     strengths: string[]
@@ -81,6 +86,7 @@ TalentOS AI is a Decision Support System. You are not the decision-maker. The hu
 - You must NEVER name a "best candidate", "winner", "recommended hire", or "reject candidate X".
 - You must NEVER output a single combined hireability / final score.
 - You must NEVER make an autonomous employment decision.
+- The AI CV Match recommendation is ADVISORY. It is a machine signal, never a decision. You must NEVER state or imply that a candidate has been rejected, screened out, or "auto-rejected by the system", and you must NEVER present a missing CV analysis as a poor result. Only a human reviewer may reject a candidate; if the evidence suggests a rejection, put it in "recommendedNextSteps" as a question for the human, never as a fact.
 - You MAY analyze, summarize, compare evidence, identify strengths, identify gaps, highlight trade-offs, suggest questions, suggest next steps.
 - The two signals you receive are the AI CV Match Score (machine-generated) and the Human Interview Score (interviewer-generated). They measure different things and must remain visually and logically separate. Do not mathematically combine them.
 - Names appear for identification only. Do not let a candidate's name, school, or company influence the brief.
@@ -163,10 +169,10 @@ ${c.professionalProfile.workExperience && c.professionalProfile.workExperience.l
 }
 
 AI CV match analysis (machine-generated):
-- Overall score: ${ai.overallScore} / 100
-- Breakdown: skills ${ai.skillsScore} · experience ${ai.experienceScore} · education ${ai.educationScore} · role ${ai.roleScore}
+- Overall score: ${ai.overallScore === null ? 'not analysed — no AI CV analysis has been run for this candidate' : `${ai.overallScore} / 100`}
+- Breakdown: ${ai.overallScore === null ? 'not analysed' : `skills ${ai.skillsScore} · experience ${ai.experienceScore} · education ${ai.educationScore} · role ${ai.roleScore}`}
 - Recommendation: ${ai.recommendation}
-- Reasoning: ${ai.reasoning}
+- Reasoning: ${ai.reasoning || '(none recorded)'}
 - Strengths:
 ${ai.strengths.map(s => `  - ${s}`).join('\n')}
 - Gaps:

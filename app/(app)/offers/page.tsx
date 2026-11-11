@@ -88,7 +88,7 @@ export default function OffersPage() {
 
       {/* Metrics */}
       {metrics?.ok && (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-9">
           {[
             { label: 'Draft', value: metrics.data.draft },
             { label: 'Pending Approval', value: metrics.data.pendingApproval, highlight: metrics.data.pendingApproval > 0 },
@@ -96,6 +96,8 @@ export default function OffersPage() {
             { label: 'Issued', value: metrics.data.issued },
             { label: 'Accepted', value: metrics.data.accepted },
             { label: 'Declined', value: metrics.data.declined },
+            { label: 'Withdrawn', value: metrics.data.withdrawn },
+            { label: 'Expired', value: metrics.data.expired },
             { label: 'Expiring Soon', value: metrics.data.expiringSoon, highlight: metrics.data.expiringSoon > 0 },
           ].map(m => (
             <Card key={m.label} className={m.highlight ? 'border-amber-300 dark:border-amber-700' : ''}>
@@ -107,6 +109,12 @@ export default function OffersPage() {
           ))}
         </div>
       )}
+
+      <div className="flex items-center justify-end">
+        <Button variant="ghost" size="sm" onClick={() => router.push('/offers/audit')}>
+          Open the offer audit log
+        </Button>
+      </div>
 
       {/* Filters */}
       <Card>
@@ -173,7 +181,14 @@ export default function OffersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{o.title}</td>
-                    <td className="px-4 py-3"><OfferStatusBadge status={o.status} /></td>
+                    <td className="px-4 py-3">
+                      <OfferStatusBadge status={o.status} />
+                      {o.supersededAt && (
+                        <span title="A newer offer replaced this one" className="mt-1 block text-[10px] uppercase tracking-wider text-slate-400">
+                          Superseded
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
                       {o.salaryAmount != null ? formatMoney(o.salaryAmount, o.salaryCurrency!, o.salaryPeriod!) : (
                         <span className="text-xs text-slate-400">restricted</span>

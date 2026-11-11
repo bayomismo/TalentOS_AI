@@ -42,7 +42,16 @@ import type { JobDescriptionOutput } from '@/lib/ai/schemas/job-description.sche
 
 export type ActionResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string; retryable: boolean } }
+  | { ok: false; error: { code: string; message: string; retryable: boolean }; meta?: ActionMeta }
+
+/** Optional structured context attached to a failure (e.g. AI quota usage).
+ *  Never contains secrets — only counters and timestamps. */
+export interface ActionMeta {
+  used?: number
+  quota?: number
+  resetAt?: string
+  [key: string]: unknown
+}
 
 // -----------------------------------------------------------------------------
 // 1. Generate Job Description
@@ -81,7 +90,7 @@ export async function generateJobDescriptionAction(
     if (!quota.allowed) {
       return {
         ok: false,
-        error: { code: 'AI_LIMIT_REACHED', message: quota.message ?? 'AI limit reached for this month.' },
+        error: { code: 'AI_LIMIT_REACHED', message: quota.message ?? 'AI limit reached for this month.', retryable: false },
         meta: { used: quota.used, quota: quota.quota, resetAt: quota.resetAt.toISOString() },
       }
     }

@@ -17,8 +17,10 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth, requirePermission } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { recordAuditLog } from '@/lib/auth/audit'
+import { deriveCandidateStatus } from '@/lib/candidates/status'
+import { evaluateHiringRequestCapacity } from '@/lib/hiring-requests/capacity'
 import { z } from 'zod'
 
 // ---------- Parser ----------
@@ -108,7 +110,9 @@ function parseCsvText(text: string): CsvParseResult {
     }
     for (const col of OPTIONAL_COLUMNS) {
       const v = get(col)
-      if (v) (row as Record<string, unknown>)[col] = v.slice(0, 500)
+      // `col` is a union of optional-string keys on ParsedCsvRow, so the
+      // assignment is type-safe without an index-signature cast.
+      if (v) row[col] = v.slice(0, 500)
     }
     validRows.push(row)
   }
@@ -160,7 +164,11 @@ function isEmail(s: string): boolean {
 }
 
 export async function parseCsvAction(text: string): Promise<CsvParseResult> {
-  const auth = await requireAuth()
+  // Sprint 19 — the parse step is part of the import flow, so it carries
+  // the SAME permission as the import step (`candidate.create`). A bare
+  // `requireAuth()` would let any signed-in VIEWER upload a CSV to be
+  // parsed by the server.
+  const auth = await requirePermission('candidate.create')
   if (!auth.ok) return { ok: false, error: 'Unauthenticated' }
   if (typeof text !== 'string') return { ok: false, error: 'Invalid input.' }
   if (text.length > 10 * 1024 * 1024) return { ok: false, error: 'File too large (>10MB).' }
@@ -208,7 +216,7 @@ export async function importCandidatesAction(
   // Verify the hiring request belongs to the caller's org
   const hr = await db.hiringRequest.findFirst({
     where: { id: hiringRequestId, organizationId: orgId },
-    select: { id: true },
+    select: { id: true, title: true, openings: true, filled: true },
   })
   if (!hr) return { ok: false, error: 'Hiring request not found.' }
 
@@ -237,6 +245,24 @@ export async function importCandidatesAction(
     return { ok: true, created: 0, skipped: rows.length }
   }
 
+  // Audit P1-25 — the capacity gate, applied to the whole batch. A CSV
+  // import is exactly the path that let a 1-opening requisition collect
+  // 40 candidates: 400 rows of CSV, no warning. The batch is refused
+  // when it does not fit, and the message says how many rows do not fit.
+  const capacity = await evaluateHiringRequestCapacity(
+    db,
+    {
+      id: hr.id,
+      title: hr.title,
+      openings: hr.openings,
+      filled: hr.filled,
+    },
+    { additional: newRows.length },
+  )
+  if (!capacity.ok) {
+    return { ok: false, error: capacity.message ?? 'This hiring request has no capacity left.' }
+  }
+
   // Bulk insert in a transaction
   const result = await db.$transaction(
     newRows.map(r =>
@@ -255,6 +281,10 @@ export async function importCandidatesAction(
           githubUrl: r.githubUrl ?? null,
           source: r.source ?? 'CSV Import',
           sourceDetails: r.notes ?? null,
+          // Audit P1-27 — `status` mirrors `stage`; a new candidate enters
+          // the pipeline at APPLIED and is therefore ACTIVE.
+          stage: 'APPLIED',
+          status: deriveCandidateStatus('APPLIED'),
         },
       }),
     ),

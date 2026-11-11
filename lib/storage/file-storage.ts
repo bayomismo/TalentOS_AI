@@ -1,16 +1,27 @@
 /**
  * File storage abstraction.
  *
- * Vercel serverless has no persistent disk. The MVP ships `MemoryStorage`
- * which keeps bytes only in-process and never writes to disk. Persisted
- * metadata (filename, size, type, parsed text) lives in `CVFile`.
+ * A `FileStorage` driver is responsible for two things:
+ *   1. keeping the ORIGINAL uploaded bytes (the CV file), and
+ *   2. returning a URL the browser can actually resolve back to them.
  *
- * Future storage backends (Vercel Blob, S3, Cloudflare R2) implement the
- * same interface and are selected via env (`STORAGE_DRIVER`).
+ * Drivers:
+ *   - `fs`      — `FileSystemStorage`. Durable: the bytes survive a process
+ *                 restart and are served back through the app's own
+ *                 `/api/cv/...` route. This is the DEFAULT driver.
+ *   - `memory`  — `MemoryStorage`. NOT durable: the bytes live in the
+ *                 process heap and are lost on restart/recycle. It is only
+ *                 used when the durable driver cannot initialise (read-only
+ *                 filesystem, serverless without a volume). It reports
+ *                 `durable === false` and hands out `memory://` URLs so the
+ *                 loss is a VISIBLE signal rather than a silent one.
+ *
+ * Persisted metadata (filename, size, mime type, parsed text) always lives
+ * in `CVFile` rows in Postgres, whichever driver is active.
  */
 
 export interface StoredObject {
-  /** Stable key (e.g. `cvs/{cvFileId}/{filename}`). */
+  /** Stable key (e.g. `cvs/{hrId}/{fileName}`). */
   key: string
   /** Bytes. */
   body: Buffer
@@ -21,8 +32,15 @@ export interface StoredObject {
 }
 
 export interface FileStorage {
-  /** Stable name of this implementation (e.g. "memory", "vercel-blob"). */
+  /** Stable name of this implementation (e.g. "fs", "memory"). */
   readonly driver: string
+
+  /**
+   * True when the bytes survive a process restart. A non-durable driver
+   * MUST return a non-resolvable URL (e.g. `memory://…`) so callers can
+   * tell the user that the original file was not kept.
+   */
+  readonly durable: boolean
 
   /**
    * Stores the object and returns a storage key/URL. The URL is what
@@ -42,8 +60,7 @@ export interface FileStorage {
 
   /**
    * Returns a URL the client can use to download the object directly
-   * without going through the server. For the MVP this is a synthetic
-   * `memory://` URL because the bytes never leave the process.
+   * (durable drivers) — `null` when the object is not available.
    */
   getDownloadUrl(key: string): Promise<string | null>
 }

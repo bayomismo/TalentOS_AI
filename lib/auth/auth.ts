@@ -24,6 +24,10 @@
 
 import NextAuth, { type NextAuthConfig } from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
+// Explicit type-only import so TypeScript resolves `next-auth/jwt` before the
+// module augmentation below is applied. Without it the augmentation target
+// cannot be found (TS2664) and the augmented JWT fields stay `unknown`.
+import type { JWT } from 'next-auth/jwt'
 import { comparePassword } from './password'
 import { db } from '@/lib/db'
 import { recordAuditLog } from './audit'
@@ -195,7 +199,7 @@ export const authConfig: NextAuthConfig = {
       // Always re-read onboarding state on every token refresh
       if (token.userId) {
         const fresh = await db.user.findUnique({
-          where: { id: token.userId as string },
+          where: { id: token.userId },
           select: {
             onboardingStatus: true,
             onboardingStep: true,
@@ -212,7 +216,8 @@ export const authConfig: NextAuthConfig = {
     },
 
     async session({ session, token }) {
-      const tokenAny = token as unknown as { userId?: string; organizationId?: string; role?: import('@prisma/client').UserRole; iat?: number; exp?: number }
+      // `JWT` is the augmented Auth.js payload declared above.
+      const tokenAny: JWT = token
       const fullName = (session.user?.name ?? '').trim()
       const firstName = fullName.split(' ')[0] ?? ''
       const lastName = fullName.split(' ').slice(1).join(' ')

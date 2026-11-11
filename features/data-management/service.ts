@@ -22,6 +22,7 @@ import 'server-only'
 import { db } from '@/lib/db'
 import { recordAuditLog } from '@/lib/auth/audit'
 import { hasPermission } from '@/lib/auth/permissions'
+import { getFileStorage } from '@/lib/storage'
 import { randomUUID } from 'crypto'
 
 export interface ServiceResult<T> {
@@ -29,6 +30,15 @@ export interface ServiceResult<T> {
   data?: T
   error?: { code: string; message: string }
 }
+
+/**
+ * Message kinds that are addressed TO a candidate (not to our own admins).
+ *
+ * `EmailOutbox` has NO organizationId — it is a global mail log — so the
+ * only way to scope candidate-addressed mail is the recipient address plus
+ * the message kind. Both flows below use this list.
+ */
+const CANDIDATE_EMAIL_KINDS = ['interview_reminder', 'offer_letter']
 
 // -----------------------------------------------------------------------------
 // Classification patterns
@@ -97,6 +107,12 @@ export interface DataManagementPreview {
       aiTasks: number
       copilotConfirmations: number
       auditLogs: number
+      /** Per-application history rows (audit P1-16 / P2-07). */
+      applications: number
+      /** CV records — the stored originals are removed with them. */
+      cvFiles: number
+      /** Candidate-addressed rows in the global mail log. */
+      emailMessages: number
     }
   }
   /// Records that look like they might be real and will NOT be touched.
@@ -215,6 +231,31 @@ export async function previewDataManagement(
   }).length
   const auditLogs = 0
 
+  // Schema-aware extras: the per-application history rows, the CV records
+  // (whose stored originals are removed with them) and the candidate-addressed
+  // rows in the global mail log.
+  const testCandidateIds = Array.from(testCandIds)
+  const testCandidateEmails = testCands.map(c => c.email)
+  const [applications, cvFiles, emailMessages] = await Promise.all([
+    db.application.count({
+      where: {
+        organizationId: ctx.organizationId,
+        candidateId: { in: testCandidateIds },
+      },
+    }),
+    db.cVFile.count({
+      where: {
+        candidate: { organizationId: ctx.organizationId },
+        candidateId: { in: testCandidateIds },
+      },
+    }),
+    testCandidateEmails.length > 0
+      ? db.emailOutbox.count({
+          where: { to: { in: testCandidateEmails }, kind: { in: CANDIDATE_EMAIL_KINDS } },
+        })
+      : Promise.resolve(0),
+  ])
+
   // Potentially real
   const potentiallyRealUsers = allUsers.filter(u => !testUserIds.has(u.id)).length
   const potentiallyRealCandidates = allCands.filter(c => !testCandIds.has(c.id)).length
@@ -237,6 +278,9 @@ export async function previewDataManagement(
           aiTasks,
           copilotConfirmations,
           auditLogs,
+          applications,
+          cvFiles,
+          emailMessages,
         },
       },
       potentiallyReal: {
@@ -264,6 +308,12 @@ export interface ExecuteCleanupResult {
     aiTasks: number
     copilotConfirmations: number
     departments: number
+    /** Candidate-addressed rows removed from the global mail log. */
+    emailMessages: number
+    /** CV records removed. */
+    cvFiles: number
+    /** Stored CV originals removed from the storage backend. */
+    storedFiles: number
   }
   preserved: {
     organization: string
@@ -415,8 +465,29 @@ export async function executeDataCleanup(
     // Step 2: delete HiringRequests
     const deletedHrs = await tx.hiringRequest.deleteMany({ where: { id: { in: Array.from(testHrIds) } } })
 
+    // The CV records (and the bytes behind them) are collected BEFORE the
+    // candidate rows go — the stored originals live outside the database.
+    const testCvFiles = testCandIds.size > 0
+      ? await tx.cVFile.findMany({
+          where: {
+            candidateId: { in: Array.from(testCandIds) },
+            candidate: { organizationId: ctx.organizationId },
+          },
+          select: { id: true, storagePath: true },
+        })
+      : []
+    const testCandEmails = allCands.filter(c => testCandIds.has(c.id)).map(c => c.email)
+
     // Step 3: delete Candidates
     const deletedCands = await tx.candidate.deleteMany({ where: { id: { in: Array.from(testCandIds) } } })
+
+    // Step 3b: candidate-addressed rows in the global mail log. There is no
+    // FK to cascade here, so they are removed explicitly.
+    const deletedEmails = testCandEmails.length > 0
+      ? await tx.emailOutbox.deleteMany({
+          where: { to: { in: testCandEmails }, kind: { in: CANDIDATE_EMAIL_KINDS } },
+        })
+      : { count: 0 }
 
     // Step 4: delete orphan departments
     const deletedDepts = orphanDeptIdsOuter.length > 0
@@ -443,6 +514,9 @@ export async function executeDataCleanup(
         aiTasks: deletedAiTasks.count,
         copilotConfirmations: deletedConfs.count,
         departments: deletedDepts.count,
+        emailMessages: deletedEmails.count,
+        cvFiles: testCvFiles.length,
+        storedFiles: 0,
       },
       preserved: {
         organization: org.name,
@@ -450,8 +524,23 @@ export async function executeDataCleanup(
         promptTemplates: preservedTemplates,
         auditLogs: preservedAuditLogs,
       },
+      storedFileKeys: testCvFiles.map(f => f.storagePath).filter((p): p is string => !!p),
     }
   }, { timeout: 30000, maxWait: 10000 })
+
+  // Remove the stored CV originals — deleting the CVFile row alone would
+  // leave the document on disk.
+  const storage = getFileStorage()
+  let deletedStoredFiles = 0
+  for (const key of result.storedFileKeys) {
+    try {
+      await storage.delete(key)
+      deletedStoredFiles++
+    } catch (err) {
+      console.error('[data-management] failed to delete stored file', key, err)
+    }
+  }
+  result.removed.storedFiles = deletedStoredFiles
 
   // Audit
   await recordAuditLog({
@@ -522,6 +611,14 @@ export interface BusinessResetPreview {
     aiConversations: number
     copilotConfirmations: number
     jobDescriptions: number
+    /** Per-application history rows (audit P1-16 / P2-07). */
+    applications: number
+    /** CV records — the stored originals are removed with them. */
+    cvFiles: number
+    /** Candidate-addressed rows in the global mail log. */
+    emailMessages: number
+    /** Stored CV originals removed from the storage backend. */
+    storedFiles: number
   }
   /// Will be preserved.
   preserved: {
@@ -559,6 +656,8 @@ export async function previewBusinessReset(
     aiConversations,
     copilotConfirmations,
     jobDescriptions,
+    applications,
+    cvFiles,
     adminCount,
     totalUsers,
     departments,
@@ -578,6 +677,11 @@ export async function previewBusinessReset(
     db.aIConversation.count({ where: { task: { organizationId: ctx.organizationId } } }),
     db.copilotActionConfirmation.count({ where: { organizationId: ctx.organizationId } }),
     db.jobDescription.count({ where: { organizationId: ctx.organizationId } }),
+    db.application.count({ where: { organizationId: ctx.organizationId } }),
+    db.cVFile.findMany({
+      where: { candidate: { organizationId: ctx.organizationId } },
+      select: { id: true, storagePath: true },
+    }),
     db.user.count({ where: { organizationId: ctx.organizationId, role: 'ADMIN', status: 'ACTIVE' } }),
     db.user.count({ where: { organizationId: ctx.organizationId } }),
     db.department.count({ where: { organizationId: ctx.organizationId } }),
@@ -585,6 +689,30 @@ export async function previewBusinessReset(
     db.auditLog.count({ where: { organizationId: ctx.organizationId } }),
     db.authSession.count({ where: { user: { organizationId: ctx.organizationId } } }),
   ])
+
+  // Candidate-addressed rows in the global mail log (no organizationId).
+  const orgCandidateEmails = await db.candidate.findMany({
+    where: { organizationId: ctx.organizationId },
+    select: { email: true },
+  })
+  const emailMessages = orgCandidateEmails.length > 0
+    ? await db.emailOutbox.count({
+        where: { to: { in: orgCandidateEmails.map(c => c.email) }, kind: { in: CANDIDATE_EMAIL_KINDS } },
+      })
+    : 0
+
+  // How many of the CV records still have their original bytes on disk.
+  const storage = getFileStorage()
+  let storedFiles = 0
+  for (const file of cvFiles) {
+    if (!file.storagePath) continue
+    try {
+      const url = await storage.getDownloadUrl(file.storagePath)
+      if (url && !url.startsWith('memory://')) storedFiles++
+    } catch {
+      /* unreadable key — nothing to remove */
+    }
+  }
 
   const currentAdmin = await db.user.findUnique({ where: { id: ctx.userId }, select: { email: true } })
 
@@ -605,6 +733,10 @@ export async function previewBusinessReset(
         aiConversations,
         copilotConfirmations,
         jobDescriptions,
+        applications,
+        cvFiles: cvFiles.length,
+        emailMessages,
+        storedFiles,
       },
       preserved: {
         organization: org.name,
@@ -666,6 +798,31 @@ export async function executeBusinessReset(
   const result = await db.$transaction(async (tx) => {
     const org = await tx.organization.findUnique({ where: { id: ctx.organizationId } })
     if (!org) throw new Error('Organization not found')
+
+    // The CV records (and the bytes behind them) are collected BEFORE the
+    // candidate rows go — the stored originals live outside the database.
+    const cvFiles = await tx.cVFile.findMany({
+      where: { candidate: { organizationId: ctx.organizationId } },
+      select: { id: true, storagePath: true },
+    })
+    const candidateEmails = await tx.candidate.findMany({
+      where: { organizationId: ctx.organizationId },
+      select: { email: true },
+    })
+
+    // 0. Candidate-addressed rows in the global mail log (no FK to cascade).
+    const deletedEmails = candidateEmails.length > 0
+      ? await tx.emailOutbox.deleteMany({
+          where: { to: { in: candidateEmails.map(c => c.email) }, kind: { in: CANDIDATE_EMAIL_KINDS } },
+        })
+      : { count: 0 }
+
+    // 0b. Per-application history rows (they also cascade from the
+    // candidate / requisition, but deleting them first makes the count
+    // in the audit trail exact).
+    const deletedApplications = await tx.application.deleteMany({
+      where: { organizationId: ctx.organizationId },
+    })
 
     // 1. Interview evaluations (FK -> Interview)
     const deletedEvaluations = await tx.interviewEvaluation.deleteMany({
@@ -734,9 +891,28 @@ export async function executeBusinessReset(
         aiConversations: deletedConvos.count,
         copilotConfirmations: deletedCopilot.count,
         jobDescriptions: deletedJobDescriptions.count,
+        applications: deletedApplications.count,
+        cvFiles: cvFiles.length,
+        emailMessages: deletedEmails.count,
+        storedFiles: 0,
       },
+      storedFileKeys: cvFiles.map(f => f.storagePath).filter((p): p is string => !!p),
     }
   }, { timeout: 60000, maxWait: 15000 })
+
+  // Remove the stored CV originals — deleting the CVFile row alone would
+  // leave the document on disk.
+  const storage = getFileStorage()
+  let deletedStoredFiles = 0
+  for (const key of result.storedFileKeys) {
+    try {
+      await storage.delete(key)
+      deletedStoredFiles++
+    } catch (err) {
+      console.error('[data-management] failed to delete stored file', key, err)
+    }
+  }
+  result.deleted.storedFiles = deletedStoredFiles
 
   // Recount preserved items
   const preservedAdminCount = await db.user.count({

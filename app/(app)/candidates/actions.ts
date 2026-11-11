@@ -8,8 +8,29 @@
  */
 
 import { db } from '@/lib/db'
-import { requireAuth, requirePermission } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
+import { allowedNextStages, isTerminalApplicationStage } from '@/lib/candidates/state-machine'
+import { deriveCandidateStatus } from '@/lib/candidates/status'
+import { evaluateHiringRequestCapacity } from '@/lib/hiring-requests/capacity'
+import type { ApplicationStage } from '@prisma/client'
 import type { Candidate } from '@/types'
+
+/**
+ * The UI stages the candidate list can render.
+ *
+ * Audit P2-01 — the union used to stop at `hired`, so REJECTED and
+ * WITHDRAWN had nowhere to go and both fell through to `applied`. A
+ * rejected candidate showed a green "Applied" badge in the global
+ * Candidates list. Every pipeline stage now has a distinct UI value.
+ */
+export type CandidateUIStage =
+  | 'applied'
+  | 'screening'
+  | 'interview'
+  | 'offer'
+  | 'hired'
+  | 'rejected'
+  | 'withdrawn'
 
 export interface CandidatesPayload {
   candidates: Array<{
@@ -17,7 +38,21 @@ export interface CandidatesPayload {
     name: string
     email: string
     position: string
-    stage: 'applied' | 'screening' | 'interview' | 'offer' | 'hired'
+    stage: CandidateUIStage
+    /**
+     * True when the candidate is in a terminal stage (HIRED, REJECTED,
+     * WITHDRAWN). Audit P0-10 — a terminal candidate is finished: it
+     * cannot be selected for a bulk move and it has no legal next
+     * stage.
+     */
+    terminal: boolean
+    /**
+     * The stages this candidate may legally move to next, computed on
+     * the server from the candidate state machine (audit P0-09). The UI
+     * offers exactly these — it never offers a transition the server
+     * would refuse.
+     */
+    allowedNextStages: ApplicationStage[]
     rating: number
     source: string | null
     appliedAt: string
@@ -26,7 +61,7 @@ export interface CandidatesPayload {
 }
 
 export async function getCandidatesAction(): Promise<CandidatesPayload> {
-  const auth = await requireAuth()
+  const auth = await requirePermission('candidate.view')
   if (!auth.ok) {
     return { candidates: [] }
   }
@@ -55,6 +90,8 @@ export async function getCandidatesAction(): Promise<CandidatesPayload> {
       email: c.email,
       position: c.hiringRequest.title,
       stage: stageToUI(c.stage),
+      terminal: isTerminalApplicationStage(c.stage),
+      allowedNextStages: [...allowedNextStages(c.stage)],
       rating: c.rating,
       source: c.source,
       appliedAt: c.appliedAt.toISOString(),
@@ -63,17 +100,26 @@ export async function getCandidatesAction(): Promise<CandidatesPayload> {
   }
 }
 
-function stageToUI(stage: string): 'applied' | 'screening' | 'interview' | 'offer' | 'hired' {
+/**
+ * Maps a pipeline stage to the UI stage the candidate list renders.
+ *
+ * Audit P2-01 — REJECTED and WITHDRAWN used to fall through to `applied`,
+ * so a rejected candidate was displayed with a green "Applied" badge. They
+ * are terminal stages with their own meaning, so they get their own UI
+ * value. The `default` branch is a defensive fallback for a stage the
+ * enum does not have yet — it must never be reached for REJECTED or
+ * WITHDRAWN.
+ */
+function stageToUI(stage: string): CandidateUIStage {
   switch (stage) {
     case 'APPLIED': return 'applied'
     case 'SCREENING': return 'screening'
     case 'INTERVIEW': return 'interview'
     case 'OFFER': return 'offer'
     case 'HIRED': return 'hired'
-    case 'REJECTED':
-    case 'WITHDRAWN':
-    default:
-      return 'applied'
+    case 'REJECTED': return 'rejected'
+    case 'WITHDRAWN': return 'withdrawn'
+    default: return 'applied'
   }
 }
 
@@ -90,7 +136,10 @@ export async function getHiringRequestsForSelectAction(): Promise<{
   ok: boolean
   requests: HiringRequestOption[]
 }> {
-  const auth = await requireAuth()
+  // Sprint 19 — `requirePermission('hiring_request.view')`, not a bare
+  // `requireAuth()`: the picker lists requisitions, so the permission
+  // registry decides. There is no hand-rolled role allowlist.
+  const auth = await requirePermission('hiring_request.view')
   if (!auth.ok) return { ok: false, requests: [] }
   const orgId = auth.data.organizationId
   const rows = await db.hiringRequest.findMany({
@@ -154,19 +203,32 @@ export async function createCandidateAction(
   // Verify the hiring request belongs to this org.
   const hr = await db.hiringRequest.findFirst({
     where: { id: hiringRequestId, organizationId: orgId },
-    select: { id: true },
+    select: { id: true, title: true, openings: true, filled: true },
   })
   if (!hr) {
     return { ok: false, error: 'That hiring request could not be found.' }
   }
 
-  // Prevent duplicate email within the same org.
+  // Audit P2-06 — ONE duplicate rule, not two contradictory ones.
+  //
+  // The database's unique key is `(organizationId, email, hiringRequestId)`
+  // and the public-apply path honours it: one candidate row per person
+  // PER REQUISITION. This action used to block the same email across the
+  // WHOLE organization, which contradicted the public path and made it
+  // impossible to add the same strong candidate to a second role.
+  //
+  // The rule now is: a person may hold ONE candidate row per requisition.
+  // The same person applying to a second role is a legitimate second
+  // application — the `Application` entity tracks the applications.
   const existing = await db.candidate.findFirst({
-    where: { organizationId: orgId, email },
+    where: { organizationId: orgId, email, hiringRequestId },
     select: { id: true },
   })
   if (existing) {
-    return { ok: false, error: 'A candidate with this email already exists.' }
+    return {
+      ok: false,
+      error: 'That candidate is already on this hiring request.',
+    }
   }
 
   // Prevent adding the caller's own user account as a candidate.
@@ -185,6 +247,20 @@ export async function createCandidateAction(
     }
   }
 
+  // Audit P1-25 — the capacity gate. A requisition for 1 role must not
+  // silently accumulate 40 candidates: `openings` is the budget a
+  // recruiter set, and adding a candidate beyond it is refused with a
+  // message that says exactly why.
+  const capacity = await evaluateHiringRequestCapacity(db, {
+    id: hr.id,
+    title: hr.title,
+    openings: hr.openings,
+    filled: hr.filled,
+  })
+  if (!capacity.ok) {
+    return { ok: false, error: capacity.message ?? 'This hiring request has no capacity left.' }
+  }
+
   const created = await db.candidate.create({
     data: {
       organizationId: orgId,
@@ -194,8 +270,10 @@ export async function createCandidateAction(
       email,
       source: input.source?.trim() || null,
       location: input.location?.trim() || null,
+      // A new candidate always enters the pipeline at APPLIED. Audit
+      // P1-27 — `status` is a real mirror of `stage`, not dead state.
       stage: 'APPLIED',
-      status: 'ACTIVE',
+      status: deriveCandidateStatus('APPLIED'),
     },
     select: { id: true },
   })

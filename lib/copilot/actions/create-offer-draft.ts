@@ -50,8 +50,24 @@ const InputSchema = z.object({
   candidateReference: z.string().min(1).max(200).describe('Free-text candidate reference resolved server-side (name, email, or id)'),
   /** CRITICAL: the AI may not invent these. The user must provide them. */
   salaryAmount: z.number().int().positive(),
-  salaryCurrency: caseInsensitiveEnum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'BRL', 'MXN', 'SGD', 'HKD', 'NZD']).default('USD'),
-  salaryPeriod: caseInsensitiveEnum(['HOUR', 'YEAR', 'MONTH', 'WEEK']).default('YEAR'),
+  /**
+   * Audit P2-11 — the vocabulary now matches the `SalaryCurrency` enum
+   * exactly. The Copilot used to accept `BRL, MXN, SGD, HKD, NZD`,
+   * which are NOT members of the enum: the service cast the value with
+   * `as never` and Prisma threw an unhandled server error. The AI must
+   * never be offered a value the database cannot store.
+   */
+  salaryCurrency: caseInsensitiveEnum([
+    'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'OTHER',
+  ]).default('USD'),
+  /**
+   * The product's salary periods. The aliases the Copilot used to send
+   * (`YEAR`, `MONTH`, `HOUR`, `WEEK`) are normalised by the offer
+   * service (`lib/offers/compensation.ts`).
+   */
+  salaryPeriod: caseInsensitiveEnum([
+    'ANNUAL', 'YEAR', 'MONTHLY', 'MONTH', 'HOURLY', 'HOUR', 'WEEKLY', 'WEEK',
+  ]).default('ANNUAL'),
   title: z.string().min(2).max(160).describe('Offer title / position'),
   bonusAmount: z.number().int().min(0).optional(),
   commissionAmount: z.number().int().min(0).optional(),

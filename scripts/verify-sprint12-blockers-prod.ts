@@ -60,11 +60,16 @@ async function main() {
   let adminContext: TestTenantContext | null = null
 
   try {
-    browser = await chromium.launch({
+    // Bind the launched browser to a non-nullable const: `browser` is captured
+    // by the nested callbacks below, so TypeScript cannot carry the narrowing
+    // of the outer `let` into them.
+    const launchedBrowser: Browser = await chromium.launch({
       headless: true,
       executablePath: '/root/.cache/ms-playwright/chromium-1223/chrome-linux/chrome',
       args: ['--no-sandbox'],
     })
+    browser = launchedBrowser
+    if (!launchedBrowser) throw new Error('Browser launch returned no instance')
 
     // =================================================================
     // PART 1 — REAL INVITATION FLOW (admin → incognito invitee)
@@ -84,7 +89,7 @@ async function main() {
       })
 
       // Context A: admin
-      const ctxA = await newIncognitoContext(browser)
+      const ctxA = await newIncognitoContext(launchedBrowser)
       const pageA: Page = await ctxA.newPage()
 
       // A1. Admin login
@@ -163,7 +168,7 @@ async function main() {
         // PART 1B — Open invitation in COMPLETELY fresh context (incognito)
         // =================================================================
         console.log('\n  -- opening invitation in fresh, unauthenticated context...')
-        const ctxB = await newIncognitoContext(browser)
+        const ctxB = await newIncognitoContext(launchedBrowser)
         const pageB: Page = await ctxB.newPage()
 
         // B1. Open the invitation URL
@@ -308,7 +313,7 @@ async function main() {
       console.log(`  [test-tenant] created ${ctx.organizationSlug}, seeded: 1 HR, 1 candidate, 1 interview, 1 offer`)
 
       // Open browser
-      const ctxC = await newIncognitoContext(browser)
+      const ctxC = await newIncognitoContext(launchedBrowser)
       const pageC: Page = await ctxC.newPage()
 
       // Login

@@ -343,6 +343,13 @@ export async function listInvitations(
     take: 100,
     include: { invitedBy: { select: { firstName: true, lastName: true } } },
   })
+  // Audit P2-24: `Invitation.status` only becomes EXPIRED when somebody
+  // tries to accept it, so the list showed invitations that can never
+  // work as live PENDING rows — overstating the team pipeline. The
+  // expiry is applied to the PROJECTION, so an expired invitation is
+  // reported as EXPIRED without rewriting history behind the admin's
+  // back.
+  const now = Date.now()
   return {
     ok: true,
     data: {
@@ -350,7 +357,8 @@ export async function listInvitations(
         id: i.id,
         email: i.email,
         role: i.role,
-        status: i.status,
+        status:
+          i.status === 'PENDING' && i.expiresAt.getTime() <= now ? 'EXPIRED' : i.status,
         expiresAt: i.expiresAt.toISOString(),
         createdAt: i.createdAt.toISOString(),
         invitedByName: i.invitedBy ? `${i.invitedBy.firstName} ${i.invitedBy.lastName}`.trim() : null,

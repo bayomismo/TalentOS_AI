@@ -243,6 +243,12 @@ enum ActivityType {
   INTERVIEW_SCHEDULED
   INTERVIEW_COMPLETED
   INTERVIEW_CANCELLED
+  /// Sprint 19 (audit P1-08) — the interview slot was moved to a new
+  /// time. The status is recorded on the Interview row; this activity
+  /// type is the timeline entry for it.
+  INTERVIEW_RESCHEDULED
+  /// Sprint 19 (audit P1-08) — nobody attended the interview.
+  INTERVIEW_NO_SHOW
   OFFER_EXTENDED
   OFFER_ACCEPTED
   OFFER_DECLINED
@@ -376,6 +382,7 @@ model Organization {
   hiringRequests     HiringRequest[]
   jobDescriptions    JobDescription[]
   candidates         Candidate[]
+  applications       Application[]
   activities         Activity[]
   candidateDecisions CandidateDecision[]
   aiTasks            AITask[]
@@ -545,13 +552,18 @@ model HiringRequest {
   department         Department          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   createdBy          User                @relation("HiringRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
   hiringManager      User?               @relation("HiringRequestHiringManager", fields: [hiringManagerId], references: [id], onDelete: SetNull)
-  jobDescription     JobDescription?     @relation(fields: [jobDescriptionId], references: [id], onDelete: SetNull)
+  jobDescription     JobDescription?     @relation("JobDescriptionHiringRequests", fields: [jobDescriptionId], references: [id], onDelete: SetNull)
   candidates         Candidate[]
+  applications       Application[]
   candidateDecisions CandidateDecision[]
   interviews         Interview[]
   offers             Offer[]
   activities         Activity[]
   aiTasks            AITask[]
+  /// The requisition a public posting is bound to. One posting resolves
+  /// to exactly one requisition (audit P1-11) instead of an unordered
+  /// `take: 1` lookup at apply time.
+  publicJobDescription JobDescription? @relation("PublicPostingRequisition")
 
   @@unique([organizationId, slug])
   @@index([organizationId, status])
@@ -579,12 +591,21 @@ model JobDescription {
   publicSlug       String?  @unique
   publicEnabled    Boolean  @default(false)
   publicPostedAt   DateTime?
+  /// Sprint 19 (audit P1-11) — the ONE requisition this public posting
+  /// belongs to. Apply used to resolve the requisition with an unordered
+  /// `take: 1` over every DRAFT|OPEN|ON_HOLD requisition, so two
+  /// requisitions for the same role split applicants at random.
+  /// Unique because a requisition has at most ONE public posting; the
+  /// column stays nullable (several postings may be unbound).
+  publicHiringRequestId String? @unique @db.Uuid
   settings         Json     @default("{}")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  hiringRequests HiringRequest[]
+  hiringRequests HiringRequest[] @relation("JobDescriptionHiringRequests")
+  /// The requisition this posting publishes (audit P1-11).
+  publicHiringRequest HiringRequest? @relation("PublicPostingRequisition", fields: [publicHiringRequestId], references: [id], onDelete: SetNull)
   aiTasks        AITask[]
 
   @@index([organizationId, isTemplate])
@@ -649,6 +670,7 @@ model Candidate {
 
   organization       Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   hiringRequest      HiringRequest            @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+  applications       Application[]
   skills             CandidateSkill[]
   experiences        CandidateExperience[]
   educations         CandidateEducation[]
@@ -666,6 +688,55 @@ model Candidate {
   @@index([email])
   @@index([lastName, firstName])
   @@index([hiringRequestId, rating])
+}
+
+// -----------------------------------------------------------------------------
+// Application — Sprint 19 (audit P1-16, P0-06, P0-07)
+//
+// The record of "this person applied to this requisition".
+//
+// `Candidate` is the PERSON. `Application` is that person's application
+// to ONE requisition. Until now a candidate was pinned to a single
+// hiring request (the unique key was `(organizationId, email,
+// hiringRequestId)`), so:
+//
+//   - a second application created a second, disconnected person — no
+//     shared profile, CV, skills or history (P1-16),
+//   - a re-application reused the SAME mutable row and reset a
+//     REJECTED / WITHDRAWN / HIRED candidate back to APPLIED while
+//     overwriting recruiter-curated identity fields (P0-06),
+//   - anyone who knew a candidate's email could rewrite that
+//     candidate's record through the public form (P0-07).
+//
+// This model carries the per-application history that a single mutable
+// row cannot represent. The `stage` here is the per-application stage
+// and is governed by `lib/applications/state-machine.ts`.
+// -----------------------------------------------------------------------------
+model Application {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String           @db.Uuid
+  candidateId     String           @db.Uuid
+  hiringRequestId String           @db.Uuid
+  stage           ApplicationStage @default(APPLIED)
+  /// Where the application came from ("Referral", "LinkedIn", "Company Site").
+  source          String?
+  sourceDetails   String?
+  appliedAt       DateTime         @default(now())
+  /// Audit P2-07 — what the applicant agreed to, and when.
+  consentAt       DateTime?
+  consentText     String?          @db.Text
+  matchScore      Int?
+  analyzedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidate     Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  hiringRequest HiringRequest @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, hiringRequestId])
+  @@index([organizationId])
+  @@index([hiringRequestId, stage])
 }
 
 model CandidateSkill {
@@ -895,6 +966,10 @@ model InterviewEvaluation {
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   evaluator User      @relation(fields: [evaluatorId], references: [id], onDelete: Restrict)
 
+  /// Sprint 19 (audit P1-06) — one evaluation per interviewer, so panel
+  /// interviews become possible. The migration de-duplicates any rows
+  /// that already violate this before the constraint is added.
+  @@unique([interviewId, evaluatorId])
   @@index([interviewId])
   @@index([evaluatorId])
   @@index([recommendation])
@@ -937,6 +1012,10 @@ model Offer {
   withdrawnAt            DateTime?
   withdrawnReason        String?
   expiredAt              DateTime?
+  /// Sprint 19 (audit P2-29) — set when a newer offer replaces this one.
+  /// After a decline a replacement offer is permitted, but both offers
+  /// used to sit in the list with nothing to tell them apart.
+  supersededAt           DateTime?
   employmentType         String? // FULL_TIME | PART_TIME | CONTRACT | INTERN
   workArrangement        String? // REMOTE | ONSITE | HYBRID
   probationPeriodDays    Int?
@@ -1100,6 +1179,10 @@ model CandidateDecision {
   notes           String?       @db.Text
   /// Optional short reason label (e.g. "Strongest match" or "Better fit available").
   reason          String?
+  /// Sprint 19 (audit P2-18) — the decision this one REPLACES. A
+  /// re-decision used to overwrite the previous row, so the history the
+  /// decision brief is built on was not trustworthy.
+  supersedesId    String?       @db.Uuid
   /// Audit: who recorded the decision and when.
   decidedById     String        @db.Uuid
   decidedAt       DateTime      @default(now())
@@ -1111,8 +1194,19 @@ model CandidateDecision {
   hiringRequest HiringRequest @relation(fields: [hiringRequestId], references: [id], onDelete: Cascade)
   decidedBy     User          @relation("CandidateDecisionMaker", fields: [decidedById], references: [id], onDelete: Restrict)
   activities    Activity[]
+  /// The decision this row replaces.
+  supersedes    CandidateDecision?  @relation("DecisionSupersession", fields: [supersedesId], references: [id], onDelete: SetNull)
+  /// Decisions that replaced this one.
+  supersededBy  CandidateDecision[] @relation("DecisionSupersession")
 
-  @@unique([candidateId, hiringRequestId])
+  /// Sprint 19 (audit P2-18) — the decision log is APPEND-ONLY.
+  ///
+  /// The old `@@unique([candidateId, hiringRequestId])` meant a
+  /// re-decision had to overwrite the previous row, which destroyed the
+  /// history the Decision Brief is built on. The unique constraint is
+  /// replaced by a plain index: many decisions per candidate + hiring
+  /// request are allowed, and `supersedesId` chains them.
+  @@index([candidateId, hiringRequestId])
   @@index([organizationId])
   @@index([hiringRequestId, decision])
   @@index([candidateId])
@@ -1196,6 +1290,12 @@ model EmailOutbox {
   metadata    Json?
   /// PENDING → SENT (real provider) | FAILED | SKIPPED (dev only).
   status      String    @default("PENDING")
+  /// Sprint 19 (audit P0-03) — which provider handled this send:
+  /// 'local-outbox' (queued only) or 'resend' (really delivered).
+  provider      String?
+  /// What the provider actually did with the message: QUEUED |
+  /// DELIVERED | FAILED. `status` stays the row's own lifecycle.
+  deliveryStatus String?
   sentAt      DateTime?
   failure     String?
   createdAt   DateTime  @default(now())

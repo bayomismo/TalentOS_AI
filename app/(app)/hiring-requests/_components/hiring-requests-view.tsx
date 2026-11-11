@@ -17,9 +17,11 @@ import { HiringRequestsTable } from '@/features/hiring-requests/components/hirin
 import { StatCard } from '@/features/dashboard/components/stat-card'
 import { getHiringRequestsAction, type HiringRequestsPayload } from '../actions'
 import { useTalentOSEvent } from '@/lib/events'
+import { allowedNextHiringRequestStatuses } from '@/lib/hiring-requests/state-machine'
 import type { HiringRequestSnapshot } from '@/lib/events/types'
 import { cn } from '@/lib/utils'
 import type { Position } from '@/types'
+import type { HiringRequestStatus } from '@prisma/client'
 
 type StatusFilter = 'all' | 'active' | 'closed'
 type DepartmentFilter = 'all' | 'Engineering' | 'Product' | 'Design' | 'Data'
@@ -125,9 +127,13 @@ export function HiringRequestsView() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total requests" value={data.stats.total} />
-        <StatCard label="Active roles" value={data.stats.active} change={12} trend="up" />
-        <StatCard label="Total openings" value={data.stats.openings} change={5} trend="up" />
-        <StatCard label="Candidates in pipeline" value={data.stats.candidates} change={9} trend="up" />
+        {/* Audit P2-02 — the `change` / `trend` props used to carry hardcoded
+            literals (12, 5, 9). A trend that is always "up" and always the
+            same number is a fabricated statistic: the card now shows the
+            real count and no invented trend. */}
+        <StatCard label="Active roles" value={data.stats.active} />
+        <StatCard label="Total openings" value={data.stats.openings} />
+        <StatCard label="Candidates in pipeline" value={data.stats.candidates} />
       </div>
 
       <Card>
@@ -258,6 +264,7 @@ function CustomizeViewComingSoonDialog({
 }
 
 function snapshotToRow(s: HiringRequestSnapshot) {
+  const hrStatus = s.status as HiringRequestStatus
   return {
     id: s.id,
     title: s.title,
@@ -270,6 +277,8 @@ function snapshotToRow(s: HiringRequestSnapshot) {
     status: (s.status === 'CLOSED' || s.status === 'CANCELLED' || s.status === 'FILLED'
       ? 'closed' as const
       : 'active' as const),
+    hrStatus,
+    allowedNextStatuses: [...allowedNextHiringRequestStatuses(hrStatus)],
     createdAt: s.createdAt,
   }
 }

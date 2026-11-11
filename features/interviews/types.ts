@@ -125,6 +125,29 @@ export interface CandidateInterviewListItem {
   reminderToken: string | null
 }
 
+/**
+ * Sprint 19 (audit P1-07) — a submitted evaluation, READ BACK.
+ *
+ * Before this, an evaluation was write-only: there was no way for an
+ * interviewer to see what they had submitted, so a typo in a score was
+ * permanent.
+ */
+export interface InterviewEvaluationView {
+  id: string
+  evaluatorId: string
+  evaluatorName: string
+  overallScore: number
+  interviewScore: number | null
+  recommendation: EvaluationRecommendation
+  strengths: string | null
+  concerns: string | null
+  overallNotes: string | null
+  criterionScores: Record<string, number> | null
+  submittedAt: string
+  /** True when the evaluation belongs to the caller. */
+  isMine: boolean
+}
+
 export interface InterviewCenterData {
   today: CandidateInterviewListItem[]
   upcoming: CandidateInterviewListItem[]
@@ -159,6 +182,8 @@ export interface CreateInterviewInput {
   durationMinutes: number
   interviewerIds: string[]
   notes?: string
+  /** Optional physical/meeting location. Mirrors `Interview.location`. */
+  location?: string
 }
 
 export interface MarkQuestionAskedInput {

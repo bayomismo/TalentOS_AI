@@ -40,10 +40,8 @@ import {
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/shared/card'
 import { Button } from '@/components/ui/button'
-import {
-  getInterviewKitAction,
-  type InterviewKitView,
-} from '@/features/interviews/actions/get-interview-data'
+import { getInterviewKitAction } from '@/features/interviews/actions/get-interview-data'
+import { type InterviewKitView } from '@/features/interviews/types'
 import { cn } from '@/lib/utils'
 
 // Shared with the list page so purpose labels and ordering stay consistent.
@@ -161,8 +159,8 @@ export default function InterviewKitDetailPage({
                 {error ?? 'This interview does not have a kit yet. Go back to the candidate and generate one.'}
               </p>
             </div>
-            <Button asChild variant="outline">
-              <Link href={`/candidates/${id}/interview-kit`}>Open kits list</Link>
+            <Button variant="outline" render={<Link href={`/candidates/${id}/interview-kit`} />}>
+              Open kits list
             </Button>
           </CardContent>
         </Card>
@@ -199,11 +197,9 @@ export default function InterviewKitDetailPage({
         description={`${kit.position} · ${kit.interviewType.replace(/_/g, ' ')} · ${kit.durationMinutes} min`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button asChild variant="outline">
-              <Link href={`/candidates/${id}/interview-kit`}>
-                <ListChecksIcon className="mr-2 h-4 w-4" />
-                All kits
-              </Link>
+            <Button variant="outline" render={<Link href={`/candidates/${id}/interview-kit`} />}>
+              <ListChecksIcon className="mr-2 h-4 w-4" />
+              All kits
             </Button>
             {!kit.hasEvaluation && (
               <Button

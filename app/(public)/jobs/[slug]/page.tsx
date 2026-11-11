@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { SparklesIcon, MapPinIcon, BriefcaseIcon, BuildingIcon, CheckCircle2Icon, ArrowLeftIcon } from 'lucide-react'
+import { SparklesIcon, MapPinIcon, BriefcaseIcon, BuildingIcon, CheckCircle2Icon, ArrowLeftIcon, ClockIcon } from 'lucide-react'
 import { db } from '@/lib/db'
+import { resolvePublicRequisition, isAcceptingPublicState } from '@/app/(public)/_lib/public-requisition'
+import { absoluteUrl } from '@/app/(public)/_lib/origin'
 
 /**
  * Sprint 17 — Public job posting.
@@ -14,6 +16,13 @@ import { db } from '@/lib/db'
  *
  * Tenant isolation: scoped by publicSlug, not by orgId. The slug
  * is a long random string so it's not enumerable.
+ *
+ * Sprint 19 (audit P1-11 / P2-23): the page resolves the ONE requisition
+ * the posting is bound to, so a role whose requisition closed no longer
+ * advertises an Apply button that dead-ends. The "Back to TalentOS" link
+ * and the footer used to point at the vendor's production host on every
+ * non-production deployment — they are now derived from the deployment
+ * itself.
  */
 
 export const metadata = {
@@ -54,6 +63,8 @@ async function getPublicJob(slug: string) {
       niceToHave: true,
       perks: true,
       publicPostedAt: true,
+      publicHiringRequestId: true,
+      organizationId: true,
       organization: {
         select: { name: true, website: true, logoUrl: true, industry: true, size: true, country: true },
       },
@@ -68,13 +79,25 @@ export default async function PublicJobPage({ params }: { params: Promise<{ slug
 
   const o = job.organization
 
+  // The ONE requisition this posting belongs to. `OPEN` is the only state
+  // that accepts applications (audit P1-11 / P2-31).
+  const resolution = await resolvePublicRequisition({
+    id: job.id,
+    organizationId: job.organizationId,
+    publicHiringRequestId: job.publicHiringRequestId,
+  })
+  const accepting = isAcceptingPublicState(resolution.state)
+
+  // The deployment's own origin — never the vendor's production host.
+  const appOrigin = await absoluteUrl('/')
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       {/* Minimal top bar */}
       <header className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link
-            href={`https://talentos-ai-lime.vercel.app`}
+            href={appOrigin}
             className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
           >
             <ArrowLeftIcon className="h-4 w-4" />
@@ -95,7 +118,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ slug
         {/* Header */}
         <div className="mb-8">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            {job.publicPostedAt && (
+            {accepting && job.publicPostedAt && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                 <SparklesIcon className="h-3 w-3" />
                 Hiring
@@ -244,22 +267,46 @@ export default async function PublicJobPage({ params }: { params: Promise<{ slug
         {/* Apply CTA — public application, no auth required (Sprint 17.6) */}
         <section className="sticky bottom-0 -mx-6 mt-10 border-t border-slate-200 bg-white/90 px-6 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-800/90 sm:-mx-10 sm:rounded-xl sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-50">Interested in this role?</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Apply directly — no account required.</p>
-            </div>
-            <Link
-              href={`/jobs/${slug}/apply`}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-emerald-500 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-            >
-              Apply now →
-            </Link>
+            {accepting ? (
+              <>
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-slate-50">Interested in this role?</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Apply directly — no account required.</p>
+                </div>
+                <Link
+                  href={`/jobs/${slug}/apply`}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-emerald-500 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                >
+                  Apply now →
+                </Link>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
+                    This role is not accepting applications
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    The position has been closed, filled, or is not open yet.
+                  </p>
+                </div>
+                <span className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  <ClockIcon className="h-4 w-4" />
+                  Closed
+                </span>
+              </>
+            )}
           </div>
         </section>
       </main>
 
       <footer className="border-t border-slate-200 py-8 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
-        <p>Powered by <a href="https://talentos-ai-lime.vercel.app" className="hover:underline">TalentOS</a></p>
+        <p>
+          Powered by{' '}
+          <a href={appOrigin} className="hover:underline">
+            TalentOS
+          </a>
+        </p>
       </footer>
     </div>
   )

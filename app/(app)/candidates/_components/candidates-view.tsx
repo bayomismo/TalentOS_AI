@@ -15,8 +15,14 @@ import { getCandidatesAction, type CandidatesPayload } from '../actions'
 import { AddCandidateModal } from './add-candidate-modal'
 import { ImportCsvModal } from './import-csv-modal'
 import { cn } from '@/lib/utils'
+import type { ApplicationStage } from '@prisma/client'
 
-type Stage = 'applied' | 'screening' | 'interview' | 'offer' | 'hired'
+/**
+ * The UI stage values the list can filter on. Audit P2-01 — `rejected`
+ * and `withdrawn` were missing, so a rejected candidate was displayed
+ * as "Applied" and could not be filtered for.
+ */
+type Stage = 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' | 'withdrawn'
 type ViewMode = 'grid' | 'list'
 
 const STAGE_FILTERS: { id: 'all' | Stage; label: string }[] = [
@@ -26,7 +32,24 @@ const STAGE_FILTERS: { id: 'all' | Stage; label: string }[] = [
   { id: 'interview', label: 'Interview' },
   { id: 'offer', label: 'Offer' },
   { id: 'hired', label: 'Hired' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'withdrawn', label: 'Withdrawn' },
 ]
+
+/**
+ * Labels for the bulk-move target dropdown. The VALUES are the real
+ * `ApplicationStage` enum values the server action expects; only the
+ * label is presentational.
+ */
+const STAGE_LABELS: Record<ApplicationStage, string> = {
+  APPLIED: 'Applied',
+  SCREENING: 'Screening',
+  INTERVIEW: 'Interview',
+  OFFER: 'Offer',
+  HIRED: 'Hired',
+  REJECTED: 'Rejected',
+  WITHDRAWN: 'Withdrawn',
+}
 
 const EMPTY: CandidatesPayload = { candidates: [] }
 
@@ -75,7 +98,7 @@ export function CandidatesView() {
   }, [])
 
   // Sprint 17 — bulk move
-  async function bulkMove(toStage: 'SCREENING' | 'INTERVIEW' | 'OFFER' | 'REJECTED' | 'HIRED') {
+  async function bulkMove(toStage: ApplicationStage) {
     if (selected.size === 0) return
     if (selected.size > 100) {
       setBulkError('Maximum 100 candidates per bulk action.')
@@ -87,7 +110,7 @@ export function CandidatesView() {
       const { bulkMoveCandidatesAction } = await import('@/app/(app)/hiring-requests/[id]/candidates/actions')
       const r = await bulkMoveCandidatesAction({
         candidateIds: Array.from(selected),
-        toStage: toStage as never,
+        toStage,
       })
       if (!r.ok) {
         setBulkError(r.error.message)
@@ -116,6 +139,52 @@ export function CandidatesView() {
     })
   }, [data, search, stage])
 
+  /**
+   * The visible candidates that may still be advanced — i.e. the ones
+   * that are NOT in a terminal stage (audit P0-10).
+   */
+  const selectableVisible = useMemo(
+    () => filtered.filter(c => !c.terminal),
+    [filtered]
+  )
+
+  /**
+   * How many candidates are still in the pipeline. The list shows
+   * rejected and withdrawn candidates too, so "active" must be counted
+   * from the stage — not from the row count (audit P2-01).
+   */
+  const activeCount = useMemo(
+    () => (data ? data.candidates.filter(c => !c.terminal).length : 0),
+    [data]
+  )
+
+  /**
+   * Audit P0-10 — the target stages the current selection may legally be
+   * moved to. Computed as the INTERSECTION of each selected candidate's
+   * legal next stages, because `bulkMoveCandidatesAction` refuses the
+   * whole batch when any selected candidate cannot make the move.
+   *
+   * A terminal candidate (HIRED / REJECTED / WITHDRAWN) has no legal next
+   * stage, so it is never selectable in the first place and never
+   * contributes a target stage here.
+   */
+  const bulkTargets = useMemo(() => {
+    if (!data || selected.size === 0) return [] as ApplicationStage[]
+    const selectedRows = data.candidates.filter(c => selected.has(c.id))
+    if (selectedRows.length === 0) return [] as ApplicationStage[]
+    let common: ApplicationStage[] | null = null
+    for (const row of selectedRows) {
+      const next = row.allowedNextStages
+      if (common === null) {
+        common = [...next]
+      } else {
+        common = common.filter(stage => next.includes(stage))
+      }
+      if (common.length === 0) break
+    }
+    return common ?? []
+  }, [data, selected])
+
   if (!data) {
     return (
       <div className="space-y-8 p-8">
@@ -139,7 +208,7 @@ export function CandidatesView() {
         description="Every person in your hiring pipeline — searchable, filterable, and ready to move forward. Click a candidate to open their full profile."
         badge={
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            {data.candidates.length} active
+            {activeCount} active
           </span>
         }
         actions={
@@ -263,22 +332,23 @@ export function CandidatesView() {
                   </div>
                   <div className="flex items-center gap-2">
                     <select
-                      disabled={bulkPending}
+                      disabled={bulkPending || bulkTargets.length === 0}
                       onChange={async (e) => {
                         const to = e.target.value
                         if (!to) return
-                        await bulkMove(to as 'SCREENING' | 'INTERVIEW' | 'OFFER' | 'REJECTED' | 'HIRED')
+                        await bulkMove(to as ApplicationStage)
                         e.currentTarget.value = ''
                       }}
                       className="h-8 rounded border border-emerald-300 bg-white px-2 text-xs dark:border-emerald-800 dark:bg-slate-800 dark:text-slate-100"
                       defaultValue=""
+                      aria-label="Move selected candidates to stage"
                     >
                       <option value="" disabled>Move to…</option>
-                      <option value="SCREENING">Screening</option>
-                      <option value="INTERVIEW">Interview</option>
-                      <option value="OFFER">Offer</option>
-                      <option value="REJECTED">Rejected</option>
-                      <option value="HIRED">Hired</option>
+                      {bulkTargets.map(target => (
+                        <option key={target} value={target}>
+                          {STAGE_LABELS[target] ?? target}
+                        </option>
+                      ))}
                     </select>
                     <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkPending}>
                       <XIcon className="h-3 w-3" />
@@ -299,17 +369,23 @@ export function CandidatesView() {
                         <input
                           type="checkbox"
                           aria-label="Select all visible candidates"
-                          checked={filtered.length > 0 && filtered.every(c => selected.has(c.id))}
+                          checked={
+                            selectableVisible.length > 0 &&
+                            selectableVisible.every(c => selected.has(c.id))
+                          }
+                          disabled={selectableVisible.length === 0}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelected(new Set([...selected, ...filtered.map(c => c.id)]))
+                              // Audit P0-10 — a terminal candidate is never
+                              // selected, not even by "select all".
+                              setSelected(new Set([...selected, ...selectableVisible.map(c => c.id)]))
                             } else {
                               const next = new Set(selected)
-                              filtered.forEach(c => next.delete(c.id))
+                              selectableVisible.forEach(c => next.delete(c.id))
                               setSelected(next)
                             }
                           }}
-                          className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                         />
                       </th>
                       <th className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-50">Candidate</th>
@@ -327,6 +403,12 @@ export function CandidatesView() {
                             type="checkbox"
                             aria-label={`Select ${c.name}`}
                             checked={selected.has(c.id)}
+                            // Audit P0-10 — a terminal candidate (HIRED,
+                            // REJECTED, WITHDRAWN) is finished: it cannot
+                            // be advanced and it must not be selectable for
+                            // a bulk move.
+                            disabled={c.terminal}
+                            title={c.terminal ? 'This candidate has reached a final stage.' : undefined}
                             onChange={(e) => {
                               const next = new Set(selected)
                               if (e.target.checked) next.add(c.id)
@@ -334,7 +416,7 @@ export function CandidatesView() {
                               setSelected(next)
                             }}
                             onClick={(e) => e.stopPropagation()}
-                            className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                            className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                           />
                         </td>
                         <td className="px-4 py-3">

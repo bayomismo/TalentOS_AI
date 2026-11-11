@@ -78,9 +78,13 @@ export function DashboardView() {
       return {
         ...prev,
         positions: [newPos, ...prev.positions],
+        // The "Open Positions" card counts PUBLISHED requisitions, so a
+        // draft requisition must not move it. The `change` value is a
+        // server-computed period-over-period delta — it is not patched
+        // here, it is recomputed on the next load.
         metrics: prev.metrics.map(m =>
-          m.label === 'Open Positions'
-            ? { ...m, value: Number(m.value) + 1, change: Number(m.change) + 1 }
+          m.label === 'Open Positions' && newPos.status === 'active'
+            ? { ...m, value: Number(m.value) + 1 }
             : m
         ),
         activities: prependActivity(prev.activities, event.payload.activity, event.payload.hiringRequest.title),

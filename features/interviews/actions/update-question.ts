@@ -10,6 +10,7 @@ import { db } from '@/lib/db'
 import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { findInterviewQuestion, markInterviewQuestionAsked } from '../repositories/interview-repository'
+import { startInterviewAction } from './get-interview-data'
 import type { ActionResult, MarkQuestionAskedInput } from '../types'
 
 export async function markInterviewQuestionAskedAction(
@@ -42,35 +43,18 @@ export async function markInterviewQuestionAskedAction(
   }
 }
 
+/**
+ * Audit P1-05 — this action used to be a SECOND, weaker copy of the
+ * "start the interview" write path: it had the right guards, but
+ * `startInterviewAction` in `get-interview-data.ts` did not, so the
+ * unguarded copy was the one that was reachable.
+ *
+ * There is now exactly ONE start path. This action delegates to it, so
+ * the permission check, the tenant scope (including the foreign-key
+ * filters) and the interview state machine can never drift apart.
+ */
 export async function markInterviewStartedAction(
   interviewId: string
 ): Promise<ActionResult<{ startedAt: string }>> {
-  try {
-    // Sprint 9 PART 13: interview.schedule. PART 11: INTERVIEWER can only
-    // start interviews they participate in.
-    const auth = await requirePermission('interview.schedule')
-    if (!auth.ok) return toActionFailure(auth)
-    const orgId = auth.data.organizationId
-    const interview = await db.interview.findFirst({
-      where: { id: interviewId, organizationId: orgId },
-      include: { participants: { select: { userId: true } } },
-    })
-    if (!interview) {
-      return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
-    }
-    if (auth.data.role === 'INTERVIEWER' && !interview.participants.some(p => p.userId === auth.data.userId)) {
-      return { ok: false, error: { code: 'NOT_FOUND', message: 'Interview not found.', retryable: false } }
-    }
-    if (interview.startedAt) {
-      return { ok: true, data: { startedAt: interview.startedAt.toISOString() } }
-    }
-    const startedAt = new Date()
-    await db.interview.update({
-      where: { id: interview.id },
-      data: { startedAt, status: 'IN_PROGRESS' },
-    })
-    return { ok: true, data: { startedAt: startedAt.toISOString() } }
-  } catch (err) {
-    return { ok: false, error: { code: 'INTERNAL', message: 'Failed to start interview.', retryable: true, details: err instanceof Error ? err.message : String(err) } }
-  }
+  return startInterviewAction(interviewId)
 }

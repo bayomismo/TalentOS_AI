@@ -159,6 +159,7 @@ export class GeminiProvider implements AIProvider {
     } catch (err) {
       throw new AIEngineError('PROVIDER_REQUEST_FAILED', errorMessage(err), {
         provider: this.name,
+        retryable: isTransientProviderError(err),
         cause: err,
       })
     }
@@ -206,6 +207,7 @@ export class GeminiProvider implements AIProvider {
       if (err instanceof AIEngineError) throw err
       throw new AIEngineError('PROVIDER_REQUEST_FAILED', errorMessage(err), {
         provider: this.name,
+        retryable: isTransientProviderError(err),
         cause: err,
       })
     }
@@ -273,6 +275,93 @@ function errorMessage(err: unknown): string {
   } catch {
     return 'Unknown error'
   }
+}
+
+/**
+ * Is this an upstream failure that is worth trying again?
+ *
+ * Google fronts Gemini with a capacity layer that answers
+ * `503 UNAVAILABLE — "This model is currently experiencing high demand"`
+ * and `429 RESOURCE_EXHAUSTED` when a request arrives while the pool is
+ * saturated. Both are transient: the same request usually succeeds
+ * seconds later. Without this classification every such failure reached
+ * the user as a hard error, so a CV upload or an interview-kit generation
+ * failed outright during a capacity spike — even though the pipeline was
+ * never at fault.
+ *
+ * A 4xx that is not 408/429 (a bad key, a malformed request, a quota
+ * that is actually a permission problem) is NOT transient: retrying it
+ * only burns time and quota.
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  const status = extractHttpStatus(err)
+  if (status === null) return false
+  return status === 408 || status === 429 || (status >= 500 && status <= 599)
+}
+
+/**
+ * Maps the gRPC-style status names the Google API returns to HTTP codes.
+ *
+ * The API answers a capacity spike with
+ * `{"error":{"code":503,"message":"...","status":"UNAVAILABLE"}}` — note
+ * that `status` is the NAME, not the number, while `code` is the
+ * number. Both shapes have to be understood.
+ */
+const STATUS_NAME_TO_HTTP: Record<string, number> = {
+  UNAVAILABLE: 503,
+  RESOURCE_EXHAUSTED: 429,
+  INTERNAL: 500,
+  DEADLINE_EXCEEDED: 504,
+  ABORTED: 503,
+  UNAUTHENTICATED: 401,
+  PERMISSION_DENIED: 403,
+  INVALID_ARGUMENT: 400,
+  NOT_FOUND: 404,
+}
+
+/**
+ * Digs the HTTP status out of whatever the SDK threw.
+ *
+ * The `@google/genai` client throws an `ApiError` that carries `status`,
+ * but it does not extend the platform `Error`, so `instanceof Error` is
+ * false and the status has to be read structurally. The error message
+ * also embeds the body as JSON, so that is the fallback.
+ */
+function extractHttpStatus(err: unknown): number | null {
+  if (err && typeof err === 'object') {
+    const direct = (err as { status?: unknown }).status
+    if (typeof direct === 'number' && Number.isFinite(direct)) return direct
+    if (typeof direct === 'string' && STATUS_NAME_TO_HTTP[direct.toUpperCase()]) {
+      return STATUS_NAME_TO_HTTP[direct.toUpperCase()]
+    }
+    const code = (err as { code?: unknown }).code
+    if (typeof code === 'number' && Number.isFinite(code)) return code
+  }
+  const message = errorMessage(err)
+  if (typeof message !== 'string') return null
+  try {
+    const parsed = JSON.parse(message) as {
+      status?: unknown
+      code?: unknown
+      error?: { status?: unknown; code?: unknown }
+    }
+    const nestedName = parsed?.error?.status
+    if (typeof nestedName === 'string' && STATUS_NAME_TO_HTTP[nestedName.toUpperCase()]) {
+      return STATUS_NAME_TO_HTTP[nestedName.toUpperCase()]
+    }
+    const nestedCode = parsed?.error?.code
+    if (typeof nestedCode === 'number' && Number.isFinite(nestedCode)) return nestedCode
+    if (typeof parsed?.status === 'number') return parsed.status
+    if (typeof parsed?.code === 'number') return parsed.code
+  } catch {
+    // Not JSON — fall through to the regex below.
+  }
+  const match = message.match(/"code"\s*:\s*"?(\d{3})"?/)
+  if (match) {
+    const parsed = Number(match[1])
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
 }
 
 /**

@@ -26,6 +26,8 @@ const valid: Array<[OfferStatus, OfferStatus]> = [
   [OfferStatus.PENDING_APPROVAL, OfferStatus.APPROVED],
   [OfferStatus.PENDING_APPROVAL, OfferStatus.DRAFT],
   [OfferStatus.APPROVED, OfferStatus.ISSUED],
+  [OfferStatus.APPROVED, OfferStatus.WITHDRAWN],
+  [OfferStatus.APPROVED, OfferStatus.EXPIRED],
   [OfferStatus.ISSUED, OfferStatus.ACCEPTED],
   [OfferStatus.ISSUED, OfferStatus.DECLINED],
   [OfferStatus.ISSUED, OfferStatus.WITHDRAWN],
@@ -71,9 +73,11 @@ check('allowedNextStatuses(DRAFT) = [PENDING_APPROVAL]',
   allowedNextStatuses(OfferStatus.DRAFT)[0] === OfferStatus.PENDING_APPROVAL)
 check('allowedNextStatuses(PENDING_APPROVAL) contains APPROVED and DRAFT',
   allowedNextStatuses(OfferStatus.PENDING_APPROVAL).length === 2)
-check('allowedNextStatuses(APPROVED) = [ISSUED]',
-  allowedNextStatuses(OfferStatus.APPROVED).length === 1 &&
-  allowedNextStatuses(OfferStatus.APPROVED)[0] === OfferStatus.ISSUED)
+check('allowedNextStatuses(APPROVED) = [ISSUED, WITHDRAWN, EXPIRED]',
+  allowedNextStatuses(OfferStatus.APPROVED).length === 3 &&
+  allowedNextStatuses(OfferStatus.APPROVED).includes(OfferStatus.ISSUED) &&
+  allowedNextStatuses(OfferStatus.APPROVED).includes(OfferStatus.WITHDRAWN) &&
+  allowedNextStatuses(OfferStatus.APPROVED).includes(OfferStatus.EXPIRED))
 check('isTerminalStatus(ACCEPTED)', isTerminalStatus(OfferStatus.ACCEPTED))
 check('isTerminalStatus(DECLINED)', isTerminalStatus(OfferStatus.DECLINED))
 check('isTerminalStatus(WITHDRAWN)', isTerminalStatus(OfferStatus.WITHDRAWN))

@@ -379,7 +379,11 @@ async function handleReadQuery(
   const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
   if (!quotaCheck.allowed) {
     return {
-      answer: quotaCheck.message ?? 'AI limit reached for this month.',
+      ok: false,
+      outcome: {
+        kind: 'error',
+        message: quotaCheck.message ?? 'AI limit reached for this month.',
+      },
       toolIds: [],
       durationMs: Date.now() - start,
     }
@@ -506,7 +510,7 @@ Do not wrap in markdown. Emit JSON only.`
     const quotaCheck = await enforceAiQuota(ctx.organizationId, 'copilot')
     if (!quotaCheck.allowed) {
       return {
-        outcome: 'failed',
+        ok: false,
         message: quotaCheck.message ?? 'AI limit reached for this month.',
       }
     }

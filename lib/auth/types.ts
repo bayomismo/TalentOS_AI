@@ -83,7 +83,12 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number]
 
 /** Audit log action constants. Adding new ones: extend this union and the
- * UI badges in `app/(app)/settings/_components/audit-log.tsx`. */
+ * UI badges in `app/(app)/settings/_components/audit-log.tsx`.
+ *
+ * `OFFER_EDITED` is declared here (audit P1-13) and is written by the
+ * offer service whenever offer terms or the letter body change. The
+ * column itself is free text (`AuditLog.action`), so a new member of
+ * this union needs no database migration. */
 export type AuditAction =
   | 'LOGIN_SUCCESS'
   | 'LOGIN_FAILURE'
@@ -109,6 +114,9 @@ export type AuditAction =
   | 'CANDIDATE_ANALYZED'
   | 'INTERVIEW_CREATED'
   | 'INTERVIEW_EVALUATED'
+  | 'INTERVIEW_CANCELLED'
+  | 'INTERVIEW_RESCHEDULED'
+  | 'INTERVIEW_NO_SHOW'
   | 'AI_JOB_DESCRIPTION_GENERATED'
   | 'AI_INTERVIEW_KIT_GENERATED'
   | 'AI_DECISION_BRIEF_GENERATED'

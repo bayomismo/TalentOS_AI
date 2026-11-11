@@ -100,16 +100,30 @@ export async function provisionWorkspace(
         select: { id: true, organizationId: true, role: true, email: true, firstName: true, lastName: true, passwordHash: true, status: true, onboardingStatus: true },
       })
       if (!user) throw new Error('NO_USER')
-      // The user must NOT already have an organization. The signup
+      // The user must NOT already have a REAL organization. The signup
       // flow creates the User with a placeholder "personal"
       // organization that we immediately replace here. We enforce
       // this by checking the user's current org is PENDING.
+      //
+      // Sprint 19 (audit P0-08): the old /onboarding/done page could
+      // complete onboarding against that placeholder organization, which
+      // made every later attempt fail with "You already belong to an
+      // organization" — the tenant signup was bricked with no way out.
+      // A completed PERSONAL placeholder with no other member is
+      // therefore treated as replaceable, which un-bricks the accounts
+      // that were already damaged.
       const currentOrg = await tx.organization.findUnique({
         where: { id: user.organizationId },
-        select: { id: true, onboardingStatus: true },
+        select: { id: true, onboardingStatus: true, slug: true },
       })
       if (currentOrg && currentOrg.onboardingStatus === 'COMPLETED') {
-        throw new Error('ALREADY_HAS_ORG')
+        const isPlaceholder = currentOrg.slug.startsWith('personal-')
+        const otherMembers = await tx.user.count({
+          where: { organizationId: currentOrg.id, id: { not: user.id } },
+        })
+        if (!(isPlaceholder && otherMembers === 0)) {
+          throw new Error('ALREADY_HAS_ORG')
+        }
       }
 
       // Slug uniqueness (case-insensitive). If the slug is taken we
@@ -196,13 +210,16 @@ export async function provisionWorkspace(
         data: { departmentId: dept.id },
       })
 
-      // Delete the placeholder org if it was empty (created during
-      // signup before the user had a real workspace).
+      // The placeholder organization (created during signup before the
+      // user had a real workspace) is emptied here — the user has just
+      // been re-assigned to the new organization. The DELETE itself runs
+      // AFTER the transaction commits: inside it, a failed statement
+      // aborts the whole transaction in Postgres, so a cleanup problem
+      // could never be isolated from the provisioning itself.
+      let placeholderOrgId: string | null = null
       if (currentOrg && currentOrg.id !== newOrg.id) {
         const otherUsers = await tx.user.count({ where: { organizationId: currentOrg.id, id: { not: user.id } } })
-        if (otherUsers === 0) {
-          await tx.organization.delete({ where: { id: currentOrg.id } }).catch(() => null)
-        }
+        if (otherUsers === 0) placeholderOrgId = currentOrg.id
       }
 
       return {
@@ -210,25 +227,41 @@ export async function provisionWorkspace(
         organizationSlug: newOrg.slug,
         organizationName: newOrg.name,
         firstAdminUserId: user.id,
+        placeholderOrgId,
       }
     })
 
+    // Audit P2-25: the placeholder cleanup used to be swallowed with
+    // `.catch(() => null)`, so orphan placeholder organizations
+    // accumulated invisibly. A failure is now reported.
+    const { placeholderOrgId, ...provisioned } = result
+    if (placeholderOrgId) {
+      try {
+        await db.organization.delete({ where: { id: placeholderOrgId } })
+      } catch (err) {
+        console.error(
+          `[onboarding] the placeholder organization ${placeholderOrgId} could not be deleted:`,
+          err,
+        )
+      }
+    }
+
     // Audit log (outside the transaction)
     await recordAuditLog({
-      organizationId: result.organizationId,
-      actorId: result.firstAdminUserId,
+      organizationId: provisioned.organizationId,
+      actorId: provisioned.firstAdminUserId,
       action: 'WORKSPACE_PROVISIONED' as never,
       targetType: 'organization',
-      targetId: result.organizationId,
+      targetId: provisioned.organizationId,
       outcome: 'success',
       metadata: {
-        organizationName: result.organizationName,
-        organizationSlug: result.organizationSlug,
-        firstAdmin: result.firstAdminUserId,
+        organizationName: provisioned.organizationName,
+        organizationSlug: provisioned.organizationSlug,
+        firstAdmin: provisioned.firstAdminUserId,
       } as any,
     }).catch(() => null)
 
-    return { ok: true, ...result }
+    return { ok: true, ...provisioned }
   } catch (err) {
     const message = (err as Error).message
     if (message === 'NO_USER') {

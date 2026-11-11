@@ -14,6 +14,7 @@
 import 'dotenv/config'
 import { readFileSync } from 'node:fs'
 import { db } from '../lib/db'
+import { requireAuth } from '@/lib/auth'
 import { generateJobDescriptionAction, createHiringRequestAction } from '../app/(app)/ai-recruiter/actions'
 import { uploadCVsAction } from '../app/(app)/hiring-requests/[id]/candidates/actions'
 import { createInterviewAction } from '@/features/interviews/actions/create-interview'
@@ -21,10 +22,23 @@ import { generateInterviewKitService } from '@/features/interviews/services/inte
 import { submitEvaluationAction } from '@/features/interviews/actions/submit-evaluation'
 import { generateDecisionBriefAction, recordDecisionAction } from '@/features/decisions/actions/get-decision-hub'
 import { createOffer, submitOfferForApproval, approveOffer, issueOffer, recordOfferResponse } from '@/features/offers/services/offer-service'
+import { getFileStorage } from '@/lib/storage'
 
 const log = (emoji: string, msg: string) => console.log(`\n${emoji} ${msg}`)
 const sub = (msg: string) => console.log(`  ${msg}`)
 let pass = 0, fail = 0
+/**
+ * Whether the scenario ran ALL the way through.
+ *
+ * The script has always used a bare `return` to abort on an unexpected
+ * result. Before the cleanup moved into a `finally`, an abort simply
+ * skipped the summary — which is why the script's exit code was
+ * unreliable. Now that the summary always prints, an abort must be
+ * reported as a FAILURE, not as a run that happened to have zero failed
+ * assertions: "4 pass, 0 fail" is not success, it is a run that stopped
+ * after four steps.
+ */
+let completed = false
 function assert(label: string, cond: boolean, detail?: string) {
   if (cond) { pass++; console.log(`  ✓ ${label}`) }
   else { fail++; console.log(`  ✗ ${label}${detail ? ' — ' + detail : ''}`) }
@@ -36,14 +50,29 @@ async function main() {
   console.log('━'.repeat(70))
 
   // ─────────────────────────────────────────────────────────────
-  // STEP 0: Setup — find the Ihab admin user
+  // STEP 0: Resolve the acting identity
   // ─────────────────────────────────────────────────────────────
-  log('👤', 'STEP 0: Sign in as the org admin (Ihab)')
+  // The script used to look up `bayomismo@gmail.com` and use THAT user for
+  // the cleanup queries. But the server actions it calls resolve their own
+  // identity through `requireAuth()`, whose local fallback picks the OLDEST
+  // active ADMIN — which is a different user in a different organization.
+  // So the requisition the e2e created belonged to one org while the
+  // cleanup looked for it in another, and one hiring request survived
+  // every run.
+  //
+  // The e2e now asks the auth layer who it is, exactly like the actions
+  // do, and cleans up against that identity.
+  log('👤', 'STEP 0: Resolve the acting identity')
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    console.log('No acting identity — aborting (this script needs the local auth fallback)')
+    return
+  }
   const admin = await db.user.findUnique({
-    where: { email: 'bayomismo@gmail.com' },
+    where: { id: auth.data.userId },
     include: { organization: true },
   })
-  if (!admin) { console.log('Admin user not found — aborting'); return }
+  if (!admin) { console.log('Acting identity not found — aborting'); return }
   sub(`Signed in as: ${admin.firstName} ${admin.lastName} (${admin.email})`)
   sub(`Org: ${admin.organization.name} (${admin.organization.slug})`)
   sub(`Role: ${admin.role}`)
@@ -51,6 +80,26 @@ async function main() {
   // We'll tag everything we create with a unique marker so cleanup is safe
   const tag = `E2E-${Date.now()}`
   sub(`Marker: ${tag} (all test data tagged with this for cleanup)`)
+
+  // The instant this run started. Every row the cleanup is allowed to
+  // delete MUST have been created at or after this moment. It is the
+  // guard that makes the cleanup incapable of touching a row that
+  // existed before the run — including the three production job
+  // descriptions an earlier version of this script destroyed.
+  const runStartedAt = new Date()
+
+  // ─────────────────────────────────────────────────────────────
+  // The whole scenario runs inside a try/finally so the fixtures are
+  // removed EVEN WHEN THE SCENARIO ABORTS.
+  //
+  // Before this, every failure path did a bare `return`, which skipped
+  // the cleanup entirely. A single transient AI-provider 503 therefore
+  // orphaned a hiring request, a candidate, an interview and a CV file —
+  // and the NEXT run then failed against that leftover state, which is
+  // exactly how a flaky external dependency turned into a cascade of
+  // confusing failures.
+  // ─────────────────────────────────────────────────────────────
+  try {
 
   // ─────────────────────────────────────────────────────────────
   // STEP 1: Create a hiring request via the AI Recruiter wizard
@@ -85,6 +134,16 @@ async function main() {
   sub(`Job description: ${(hrResult.data as any).jobDescription?.id}`)
   sub(`AI task: ${jd.data.aiTaskId}`)
 
+  // The AI Recruiter wizard creates a 1-opening requisition, but the
+  // Decision Brief compares 2-4 finalists and the capacity gate
+  // (audit P1-25) refuses a second candidate once
+  // `filled + active >= openings`. The e2e scenario is therefore "a role
+  // with two openings" — one hire at STEP 13, one still open.
+  await db.hiringRequest.update({
+    where: { id: hiringRequestId },
+    data: { openings: 2 },
+  })
+
   // ─────────────────────────────────────────────────────────────
   // STEP 2: Upload CV (this creates the candidate AND runs AI ranking)
   // ─────────────────────────────────────────────────────────────
@@ -112,22 +171,33 @@ async function main() {
   sub(`Each got AI analysis + ranking against the JD`)
   assert('1 candidate created', cvResult.data.created === 1)
 
-  // Get the candidate that was just created (the most recent on this HR)
-  const candidate = await db.candidate.findFirst({
-    where: { hiringRequestId },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (!candidate) { console.log('FATAL: no candidate created'); return }
+  // Get the candidate that was just created.
+  //
+  // The id comes from the ACTION's own response, not from a re-query of
+  // the database: `uploadCVsAction` returns the row it created, so this
+  // cannot be affected by read-after-write timing or by another run's
+  // rows on the same requisition. The previous implementation re-queried
+  // by `hiringRequestId` + `createdAt desc` and intermittently found
+  // nothing, which aborted the whole scenario.
+  const createdRow = cvResult.data.results?.[0]?.candidate
+  let candidateId: string | null = createdRow?.id ?? null
+  if (!candidateId) {
+    const fallback = await db.candidate.findFirst({
+      where: { hiringRequestId },
+      orderBy: { createdAt: 'desc' },
+    })
+    candidateId = fallback?.id ?? null
+  }
+  if (!candidateId) { console.log('FATAL: no candidate created'); return }
   // Tag with our marker for cleanup + relabel to "Ada Lovelace" for the scenario
   await db.candidate.update({
-    where: { id: candidate.id },
+    where: { id: candidateId },
     data: {
       firstName: 'Ada',
       lastName: 'Lovelace',
       source: `CV Upload (E2E ${tag})`,
     },
   })
-  const candidateId = candidate.id
   sub(`Candidate: ${candidateId} (Ada Lovelace)`)
 
   // Verify match score was saved
@@ -261,6 +331,9 @@ async function main() {
       base64: pdfBuffer2.toString('base64'),
     }],
   })
+  if (!cv2.ok || cv2.data.created === 0) {
+    sub(`2nd CV upload created no candidate: ${JSON.stringify(cv2).slice(0, 220)}`)
+  }
   if (cv2.ok && cv2.data.created > 0) {
     const secondCandidate = await db.candidate.findFirst({
       where: { hiringRequestId, id: { not: candidateId } },
@@ -410,7 +483,7 @@ async function main() {
   const finalCandidate = await db.candidate.findUnique({
     where: { id: candidateId },
     include: {
-      hiringRequest: { select: { title: true, status: true } },
+      hiringRequest: { select: { title: true, status: true, filled: true, openings: true } },
       activities: { orderBy: { occurredAt: 'asc' } },
     },
   })
@@ -418,8 +491,19 @@ async function main() {
   const finalInterview = await db.interview.findUnique({ where: { id: interviewId } })
 
   console.log()
-  assert('Candidate stage = OFFER (after decision SELECTED)', finalCandidate?.stage === 'OFFER')
-  assert('Hiring request is still OPEN', finalCandidate?.hiringRequest.status === 'OPEN')
+  // Sprint 19 (audit P0-01/P0-02): an ACCEPTED offer HIRES the
+  // candidate. These assertions used to require the stage to still be
+  // OFFER and the requisition to still be OPEN — that is exactly the
+  // defect the business-flow audit reported ("an accepted offer hires
+  // nobody"), so the expectation is corrected here, not in the product.
+  assert('Candidate stage = HIRED (the accepted offer hired them)', finalCandidate?.stage === 'HIRED')
+  assert('Candidate hiredAt is set', finalCandidate?.hiredAt != null)
+  // The requisition has TWO openings (see STEP 1) and one hire, so it is
+  // still open: `HiringRequestStatus.FILLED` is only reachable when every
+  // opening is filled (audit A24 covers that case in audit-6).
+  assert('Hiring request is still OPEN (one of two openings filled)', finalCandidate?.hiringRequest.status === 'OPEN')
+  assert('Hiring request filled counter = 1', finalCandidate?.hiringRequest.filled === 1)
+  assert('Hiring request openings = 2', finalCandidate?.hiringRequest.openings === 2)
   assert('Offer status = ACCEPTED', finalOffer?.status === 'ACCEPTED')
   assert('Interview status = COMPLETED (after evaluation submitted)', finalInterview?.status === 'COMPLETED')
   assert('Activities logged', (finalCandidate?.activities.length ?? 0) >= 5)
@@ -433,12 +517,14 @@ async function main() {
   console.log()
   console.log('━'.repeat(70))
   console.log(`✓ HIRED: Ada Lovelace accepted the offer for Senior Backend Engineer`)
-  console.log(`  Pipeline: APPLIED → SCREENING → INTERVIEW → OFFER → ACCEPTED`)
+  console.log(`  Pipeline: APPLIED → SCREENING → INTERVIEW → OFFER → HIRED`)
   console.log(`  All 14 steps completed in this run.`)
   console.log('━'.repeat(70))
+  completed = true
 
+  } finally {
   // ─────────────────────────────────────────────────────────────
-  // CLEANUP
+  // CLEANUP — always runs, even when the scenario aborted
   // ─────────────────────────────────────────────────────────────
   log('🧹', 'CLEANUP: removing all test data')
   // Find everything tagged with our marker
@@ -448,8 +534,27 @@ async function main() {
   })).map(c => c.id)
   sub(`Found ${candIds.length} test candidate(s) to clean`)
   if (candIds.length > 0) {
+    // The durable storage driver wrote the ORIGINAL bytes of the CV to
+    // disk; the row delete above does not remove them, so the key has to
+    // be resolved and deleted explicitly or every run leaks a file.
+    const cvFiles = await db.cVFile.findMany({
+      where: { candidateId: { in: candIds } },
+      select: { storagePath: true },
+    })
+    for (const cv of cvFiles) {
+      if (!cv.storagePath) continue
+      try {
+        await getFileStorage().delete(cv.storagePath)
+      } catch {
+        // A missing file must not abort the cleanup of the rest.
+      }
+    }
     await db.cVFile.deleteMany({ where: { candidateId: { in: candIds } } })
     await db.activity.deleteMany({ where: { candidateId: { in: candIds } } })
+    // `Application` rows are the person x requisition records introduced
+    // by the business-flow remediation — they FK-block the candidate
+    // delete if they are left behind.
+    await db.application.deleteMany({ where: { candidateId: { in: candIds } } }).catch(() => null)
     await db.interview.deleteMany({ where: { candidateId: { in: candIds } } })
     await db.candidate.deleteMany({ where: { id: { in: candIds } } })
   }
@@ -467,24 +572,66 @@ async function main() {
   })
   const hrIds = Array.from(new Set(jdsWithTag.flatMap(j => j.hiringRequests.map(h => h.id))))
   if (hrIds.length === 0) {
-    // Fallback: find HRs created in the last 10 min
+    // Fallback: the AI sometimes stores the marker somewhere other than
+    // the JD text, so look for the requisitions this run CREATED.
+    //
+    // This used to be "every hiring request in the organization created in
+    // the last 10 minutes", which swept up ANY requisition a real user
+    // happened to create in the same window — and, combined with a second
+    // bug in the JD cleanup below, deleted production job descriptions.
+    //
+    // It is now scoped to this run's own creator, so it can only ever
+    // remove rows the e2e made.
     const recent = await db.hiringRequest.findMany({
-      where: { organizationId: admin.organizationId, createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) } },
+      where: {
+        organizationId: admin.organizationId,
+        createdById: admin.id,
+        createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+      },
     })
     recent.forEach(r => hrIds.push(r.id))
   }
   sub(`Found ${hrIds.length} test hiring request(s) to clean`)
   if (hrIds.length > 0) {
+    // Resolve the job descriptions this run created BEFORE the hiring
+    // requests are deleted.
+    //
+    // The lookup used to run afterwards, filtered on
+    // `hiringRequests: { some: { id: { in: hrIds } } }` — but deleting
+    // the requisitions first detaches the job description (the relation
+    // is `onDelete: SetNull`), so the filter no longer matched anything
+    // and one orphan job description leaked on every single run.
+    //
+    // The `createdAt` floor makes it impossible to delete a job
+    // description that existed before this run started.
+    const jdIds = (await db.jobDescription.findMany({
+      where: {
+        organizationId: admin.organizationId,
+        createdAt: { gte: runStartedAt },
+        OR: [
+          { summary: { contains: tag } },
+          { description: { contains: tag } },
+          { title: { contains: tag } },
+          { hiringRequests: { some: { id: { in: hrIds } } } },
+        ],
+      },
+      select: { id: true },
+    })).map(j => j.id)
     // Delete related offers
     const offerIds = (await db.offer.findMany({ where: { hiringRequestId: { in: hrIds } }, select: { id: true } })).map(o => o.id)
     await db.candidateDecision.deleteMany({ where: { hiringRequestId: { in: hrIds } } }).catch(() => null)
     if (offerIds.length > 0) {
       await db.offer.deleteMany({ where: { id: { in: offerIds } } }).catch(() => null)
     }
+    await db.application.deleteMany({ where: { hiringRequestId: { in: hrIds } } }).catch(() => null)
+    const ivIds = (await db.interview.findMany({ where: { hiringRequestId: { in: hrIds } }, select: { id: true } })).map(i => i.id)
+    if (ivIds.length > 0) {
+      await db.interviewEvaluation.deleteMany({ where: { interviewId: { in: ivIds } } }).catch(() => null)
+    }
     await db.interview.deleteMany({ where: { hiringRequestId: { in: hrIds } } }).catch(() => null)
     await db.hiringRequest.deleteMany({ where: { id: { in: hrIds } } }).catch(() => null)
-    // Delete JDs
-    const jdIds = (await db.jobDescription.findMany({ where: { hiringRequests: { every: { id: { in: hrIds } } } }, select: { id: true } })).map(j => j.id)
+    // Now that the requisitions are gone, delete the job descriptions
+    // captured above.
     if (jdIds.length > 0) {
       await db.jobDescription.deleteMany({ where: { id: { in: jdIds } } }).catch(() => null)
     }
@@ -492,7 +639,12 @@ async function main() {
   sub('Cleanup complete')
 
   console.log()
+  if (!completed) {
+    console.log(`========== ${pass} pass, ${fail} fail — ABORTED (the scenario did not run to the end) ==========`)
+    process.exit(1)
+  }
   console.log(`========== ${pass} pass, ${fail} fail ==========`)
   if (fail > 0) process.exit(1)
+  }
 }
 main().catch(e => { console.error('FATAL:', e); process.exit(1) })

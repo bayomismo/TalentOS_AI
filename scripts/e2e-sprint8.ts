@@ -185,8 +185,12 @@ async function main() {
     ok('decisionId set', !!decRes.data.decisionId)
     ok('decision = SELECTED', decRes.data.decision === 'SELECTED')
   }
-  const decisionRow = await db.candidateDecision.findUnique({
-    where: { candidateId_hiringRequestId: { candidateId: candA.id, hiringRequestId: hr.id } },
+  // Sprint 19 (audit P2-18) — the decision log is append-only, so there
+  // is no longer a UNIQUE (candidateId, hiringRequestId) key to look the
+  // row up by. The CURRENT decision is the newest one.
+  const decisionRow = await db.candidateDecision.findFirst({
+    where: { candidateId: candA.id, hiringRequestId: hr.id },
+    orderBy: [{ decidedAt: 'desc' }, { createdAt: 'desc' }],
   })
   ok('CandidateDecision row persisted', !!decisionRow)
   ok('decision row.decision = SELECTED', decisionRow?.decision === 'SELECTED')

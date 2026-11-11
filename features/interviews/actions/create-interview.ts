@@ -9,9 +9,12 @@
 
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
+import { ApplicationStage } from '@prisma/client'
 import { requireAuth, requirePermission, recordAuditLog } from '@/lib/auth'
 import { toActionFailure } from '@/lib/auth/adapter'
 import { getEventBus } from '@/lib/events'
+import { canReceiveDecisionOrOffer } from '@/lib/candidates/state-machine'
+import { transitionCandidateStage } from '@/lib/candidates/transition'
 import type { CreateInterviewInput, ActionResult } from '../types'
 
 function safeRevalidate(path: string): void {
@@ -48,6 +51,58 @@ export async function createInterviewAction(
     if (!candidate) {
       return { ok: false, error: { code: 'NOT_FOUND', message: 'Candidate not found.', retryable: false } }
     }
+
+    // -----------------------------------------------------------------------
+    // Audit P1-09 — scheduling an interview used to bypass the candidate
+    // stage rules entirely: a REJECTED or HIRED candidate could be
+    // scheduled, two concurrent interviews collided on the same "round",
+    // and the candidate's stage was never advanced, so the pipeline board
+    // and the interview list disagreed about where the candidate was.
+    // -----------------------------------------------------------------------
+
+    // 1. A terminal candidate cannot be interviewed.
+    if (!canReceiveDecisionOrOffer(candidate.stage)) {
+      return {
+        ok: false,
+        error: {
+          code: 'TERMINAL_STAGE',
+          message:
+            `${candidate.firstName} ${candidate.lastName} is at stage ${candidate.stage}. ` +
+            'A candidate in a terminal stage (HIRED, REJECTED or WITHDRAWN) cannot be scheduled for an interview.',
+          retryable: false,
+        },
+      }
+    }
+
+    // 2. No concurrent open interview for the same candidate.
+    const openInterview = await db.interview.findFirst({
+      where: {
+        candidateId: candidate.id,
+        organizationId: orgId,
+        status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+      },
+      select: { id: true, scheduledAt: true },
+    })
+    if (openInterview) {
+      return {
+        ok: false,
+        error: {
+          code: 'DUPLICATE_INTERVIEW',
+          message:
+            'This candidate already has an open interview. ' +
+            'Reschedule or cancel it before scheduling another one.',
+          retryable: false,
+        },
+      }
+    }
+
+    // 3. The round is the number of interviews this candidate already
+    //    had — not a guess derived from the stage.
+    const previousInterviews = await db.interview.count({
+      where: { candidateId: candidate.id, organizationId: orgId },
+    })
+    const round = previousInterviews + 1
+
     const interview = await db.interview.create({
       data: {
         organizationId: candidate.organizationId,
@@ -60,8 +115,9 @@ export async function createInterviewAction(
         scheduledAt: new Date(input.scheduledAt),
         durationMinutes: input.durationMinutes,
         notes: input.notes,
+        location: input.location ?? null,
         stage: 'INTERVIEW',
-        round: candidate.stage === 'SCREENING' ? 1 : 2,
+        round,
       },
     })
     for (const userId of input.interviewerIds) {
@@ -69,6 +125,31 @@ export async function createInterviewAction(
         data: { interviewId: interview.id, userId, role: 'INTERVIEWER' },
       })
     }
+
+    // 4. The candidate's stage follows the interview. The write goes
+    //    through the shared transition helper, so it is validated and the
+    //    Application mirror stays in step. A candidate already in
+    //    INTERVIEW keeps their stage (INTERVIEW → INTERVIEW is not a
+    //    transition).
+    let stageUpdated = false
+    if (candidate.stage === 'APPLIED' || candidate.stage === 'SCREENING') {
+      const moved = await db.$transaction(async (tx) =>
+        transitionCandidateStage(tx, {
+          candidateId: candidate.id,
+          toStage: ApplicationStage.INTERVIEW,
+          actorId,
+          reason: `Interview scheduled (round ${round}).`,
+        }),
+      )
+      if (!moved.ok) {
+        return {
+          ok: false,
+          error: { code: moved.error.code, message: moved.error.message, retryable: false },
+        }
+      }
+      stageUpdated = true
+    }
+
     const activity = await db.activity.create({
       data: {
         organizationId: candidate.organizationId,
@@ -78,9 +159,29 @@ export async function createInterviewAction(
         hiringRequestId: candidate.hiringRequestId,
         interviewId: interview.id,
         title: `Interview scheduled — ${interview.type}`,
-        description: `${interview.durationMinutes} min · ${interview.scheduledAt.toISOString().slice(0, 16).replace('T', ' ')}`,
+        description: `${interview.durationMinutes} min · ${interview.scheduledAt.toISOString().slice(0, 16).replace('T', ' ')} · round ${round}`,
+        metadata: { round, stageUpdated },
       },
     })
+    if (stageUpdated) {
+      const stageActivity = await db.activity.create({
+        data: {
+          organizationId: candidate.organizationId,
+          type: 'CANDIDATE_MOVED',
+          actorId,
+          candidateId: candidate.id,
+          hiringRequestId: candidate.hiringRequestId,
+          interviewId: interview.id,
+          title: `Candidate moved to INTERVIEW`,
+          description: `Advanced from ${candidate.stage} when the interview was scheduled.`,
+          metadata: { fromStage: candidate.stage, toStage: 'INTERVIEW', trigger: 'INTERVIEW_SCHEDULED' },
+        },
+      })
+      bus.publish({
+        type: 'ActivityRecorded',
+        payload: { activity: { id: stageActivity.id, type: stageActivity.type, title: stageActivity.title, description: stageActivity.description, actorName: null, candidateName: null, occurredAt: stageActivity.occurredAt.toISOString() } },
+      })
+    }
     bus.publish({
       type: 'InterviewCreated',
       payload: {

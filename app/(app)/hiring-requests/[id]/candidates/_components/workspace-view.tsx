@@ -19,6 +19,7 @@ import {
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
+  BriefcaseIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   FileTextIcon,
@@ -40,6 +41,8 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/features/shared/components/status-badge'
 import { HROffersSummary } from '@/features/offers/components/hr-offers-summary'
 import { getEventBus } from '@/lib/events'
+import { allowedNextStages } from '@/lib/candidates/state-machine'
+import { deriveCandidateStatus } from '@/lib/candidates/status'
 import {
   getCandidateWorkspaceAction,
   uploadCVsAction,
@@ -50,7 +53,7 @@ import {
   type UploadedCVResult,
 } from '../actions'
 import { cn } from '@/lib/utils'
-import type { ApplicationStage } from '@prisma/client'
+import type { ApplicationStage, HiringRequestStatus } from '@prisma/client'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -86,6 +89,22 @@ const STAGE_FILTERS: { id: 'all' | ApplicationStage; label: string }[] = [
   { id: 'REJECTED', label: 'Rejected' },
   { id: 'WITHDRAWN', label: 'Withdrawn' },
 ]
+
+/**
+ * Audit P0-09 — the label shown for each legal stage transition in the
+ * "Move stage" menu. The set of OPTIONS is not hard-coded: it comes from
+ * `candidate.allowedNextStages`, which the server derives from the
+ * candidate state machine. Only the wording lives here.
+ */
+const STAGE_ACTION_LABELS: Record<ApplicationStage, string> = {
+  APPLIED: 'Move to Applied',
+  SCREENING: 'Shortlist → Screening',
+  INTERVIEW: 'Move to Interview',
+  OFFER: 'Move to Offer',
+  HIRED: 'Mark as Hired',
+  REJECTED: 'Reject',
+  WITHDRAWN: 'Mark as Withdrawn',
+}
 
 const RECOMMENDATION_FILTERS = [
   'all',
@@ -153,6 +172,8 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
                     yearsExperience: e.payload.yearsExperience,
                     topSkills: [],
                     stage: 'APPLIED',
+                    status: 'ACTIVE',
+                    allowedNextStages: [...allowedNextStages('APPLIED')],
                     rating: 0,
                     matchScore: null,
                     recommendation: null,
@@ -214,7 +235,15 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
           if (!prev) return prev
           const candidates = prev.candidates.map(c =>
             c.id === e.payload.candidateId
-              ? { ...c, stage: e.payload.toStage }
+              ? {
+                  ...c,
+                  stage: e.payload.toStage,
+                  // Keep the derived fields in step with the new stage, so
+                  // the "Move stage" menu never offers a transition the
+                  // state machine would refuse (audit P0-09).
+                  status: deriveCandidateStatus(e.payload.toStage),
+                  allowedNextStages: [...allowedNextStages(e.payload.toStage)],
+                }
               : c
           )
           const shortlisted = candidates.filter(
@@ -474,6 +503,13 @@ export function WorkspaceView({ hiringRequestId }: { hiringRequestId: string }) 
 
       {/* Sprint 10: Offers summary */}
       <HROffersSummary hiringRequestId={data.hiringRequest.id} />
+
+      {/* Audit P1-17 / P1-25 / P1-26 — the requisition lifecycle controls.
+          Before this pass `CLOSED`, `FILLED`, `ON_HOLD` and `CANCELLED`
+          were unreachable, openings could not be edited, and a requisition
+          whose job description had been deleted could never get a new
+          one. */}
+      <RequisitionControls hiringRequest={data.hiringRequest} />
 
       {/* Job description summary */}
       {jd ? (
@@ -1105,58 +1141,45 @@ function CandidateRow({
             </Button>
           )}
           <div className="relative">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setMenuOpen(o => !o)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              Move stage
-              <ChevronDownIcon className="h-3 w-3" aria-hidden />
-            </Button>
-            {menuOpen && (
+            {/* Audit P0-09 / P0-10 — the menu is driven by the server-computed
+                legal next stages, so it can never offer a transition the
+                state machine refuses. A terminal candidate (HIRED /
+                REJECTED / WITHDRAWN) has no legal next stage, so there is
+                nothing to advance and no button is rendered. */}
+            {candidate.allowedNextStages.length > 0 && (
               <>
-                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
-                <div
-                  role="menu"
-                  className="absolute right-0 z-20 mt-1.5 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMenuOpen(o => !o)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
                 >
-                  <StageMenuItem
-                    onClick={() => {
-                      onMoveStage(candidate.id, 'SCREENING')
-                      setMenuOpen(false)
-                    }}
-                    label="Shortlist → Screening"
-                    current={candidate.stage === 'SCREENING'}
-                  />
-                  <StageMenuItem
-                    onClick={() => {
-                      onMoveStage(candidate.id, 'INTERVIEW')
-                      setMenuOpen(false)
-                    }}
-                    label="Move to Interview"
-                    current={candidate.stage === 'INTERVIEW'}
-                  />
-                  <StageMenuItem
-                    onClick={() => {
-                      onMoveStage(candidate.id, 'OFFER')
-                      setMenuOpen(false)
-                    }}
-                    label="Move to Offer"
-                    current={candidate.stage === 'OFFER'}
-                  />
-                  <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
-                  <StageMenuItem
-                    onClick={() => {
-                      onMoveStage(candidate.id, 'REJECTED')
-                      setMenuOpen(false)
-                    }}
-                    label="Reject"
-                    current={candidate.stage === 'REJECTED'}
-                    tone="rose"
-                  />
-                </div>
+                  Move stage
+                  <ChevronDownIcon className="h-3 w-3" aria-hidden />
+                </Button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
+                    <div
+                      role="menu"
+                      className="absolute right-0 z-20 mt-1.5 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {candidate.allowedNextStages.map(target => (
+                        <StageMenuItem
+                          key={target}
+                          onClick={() => {
+                            onMoveStage(candidate.id, target)
+                            setMenuOpen(false)
+                          }}
+                          label={STAGE_ACTION_LABELS[target] ?? `Move to ${target.toLowerCase()}`}
+                          current={candidate.stage === target}
+                          tone={target === 'REJECTED' ? 'rose' : undefined}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -1232,4 +1255,251 @@ function readFileAsBase64(file: File): Promise<string> {
     }
     reader.readAsDataURL(file)
   })
+}
+
+// -----------------------------------------------------------------------------
+// Requisition controls (audit P1-17, P1-25, P1-26)
+// -----------------------------------------------------------------------------
+
+/**
+ * The label shown for each hiring-request status.
+ */
+const HR_STATUS_LABELS: Record<HiringRequestStatus, string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  ON_HOLD: 'On hold',
+  CLOSED: 'Closed',
+  FILLED: 'Filled',
+  CANCELLED: 'Cancelled',
+}
+
+/**
+ * The lifecycle controls for a requisition: its status, its number of
+ * openings, and the job description it evaluates candidates against.
+ *
+ * Audit P1-17 — the status had no lifecycle at all, so `CLOSED`,
+ * `FILLED`, `ON_HOLD` and `CANCELLED` were unreachable and the "Closed"
+ * filter on the hiring-requests list was a permanent empty state. The
+ * options offered here are the LEGAL next statuses, computed on the
+ * server from `lib/hiring-requests/state-machine.ts` — the UI never
+ * offers a move the server would refuse.
+ *
+ * Audit P1-25 — openings were hardcoded at creation and could not be
+ * edited, so the capacity gate could not be adjusted.
+ *
+ * Audit P1-26 — a requisition whose job description was deleted was
+ * stranded; it can now be given a new one.
+ */
+function RequisitionControls({
+  hiringRequest,
+}: {
+  hiringRequest: WorkspacePayload['hiringRequest']
+}) {
+  const [status, setStatus] = useState<HiringRequestStatus>(hiringRequest.status)
+  const [openings, setOpenings] = useState<string>(String(hiringRequest.openings))
+  const [pending, setPending] = useState(false)
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const [jobDescriptions, setJobDescriptions] = useState<
+    { id: string; title: string }[] | null
+  >(null)
+
+  const run = async (fn: () => Promise<{ ok: boolean; error?: { message: string } }>) => {
+    setPending(true)
+    setMessage(null)
+    try {
+      const res = await fn()
+      if (!res.ok) {
+        setMessage({ tone: 'error', text: res.error?.message ?? 'The change was refused.' })
+        return false
+      }
+      return true
+    } catch (err) {
+      setMessage({
+        tone: 'error',
+        text: err instanceof Error ? err.message : 'Something went wrong.',
+      })
+      return false
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <BriefcaseIcon className="h-4 w-4 text-emerald-600" aria-hidden />
+          <CardTitle>Requisition</CardTitle>
+        </div>
+        <CardDescription>
+          Where this role is in its lifecycle, how many people it can take, and what it
+          evaluates candidates against.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label
+              htmlFor="hr-status"
+              className="block text-xs font-medium uppercase tracking-wider text-slate-500"
+            >
+              Status
+            </label>
+            <select
+              id="hr-status"
+              value={status}
+              disabled={pending || hiringRequest.allowedNextStatuses.length === 0}
+              onChange={async e => {
+                const next = e.target.value as HiringRequestStatus
+                const ok = await run(async () => {
+                  const { updateHiringRequestStatusAction } = await import(
+                    '@/app/(app)/hiring-requests/actions'
+                  )
+                  return updateHiringRequestStatusAction({
+                    hiringRequestId: hiringRequest.id,
+                    toStatus: next,
+                  })
+                })
+                if (ok) {
+                  setStatus(next)
+                  setMessage({ tone: 'ok', text: `Requisition is now ${HR_STATUS_LABELS[next]}.` })
+                } else {
+                  setStatus(hiringRequest.status)
+                }
+              }}
+              className="mt-1 h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <option value={status}>{HR_STATUS_LABELS[status]}</option>
+              {hiringRequest.allowedNextStatuses.map(s => (
+                <option key={s} value={s}>
+                  {HR_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="hr-openings"
+              className="block text-xs font-medium uppercase tracking-wider text-slate-500"
+            >
+              Openings
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                id="hr-openings"
+                type="number"
+                min={0}
+                value={openings}
+                disabled={pending}
+                onChange={e => setOpenings(e.target.value)}
+                className="h-9 w-24 rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || Number(openings) === hiringRequest.openings}
+                onClick={async () => {
+                  const ok = await run(async () => {
+                    const { updateHiringRequestOpeningsAction } = await import(
+                      '@/app/(app)/hiring-requests/actions'
+                    )
+                    return updateHiringRequestOpeningsAction({
+                      hiringRequestId: hiringRequest.id,
+                      openings: Number(openings),
+                    })
+                  })
+                  if (ok) setMessage({ tone: 'ok', text: 'Openings updated.' })
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            <p>
+              {hiringRequest.filled} hired · {hiringRequest.activeApplicants} active ·{' '}
+              {hiringRequest.remainingCapacity} slot
+              {hiringRequest.remainingCapacity === 1 ? '' : 's'} left
+            </p>
+          </div>
+        </div>
+
+        {/* Audit P1-26 — attach (or replace) the job description. */}
+        <div>
+          <label
+            htmlFor="hr-jd"
+            className="block text-xs font-medium uppercase tracking-wider text-slate-500"
+          >
+            Job description
+          </label>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <select
+              id="hr-jd"
+              value={hiringRequest.jobDescriptionId ?? ''}
+              disabled={pending}
+              onChange={async e => {
+                const jdId = e.target.value === '' ? null : e.target.value
+                const ok = await run(async () => {
+                  const { attachJobDescriptionAction } = await import(
+                    '@/app/(app)/hiring-requests/actions'
+                  )
+                  return attachJobDescriptionAction({
+                    hiringRequestId: hiringRequest.id,
+                    jobDescriptionId: jdId,
+                  })
+                })
+                if (ok) {
+                  setMessage({
+                    tone: 'ok',
+                    text: jdId ? 'Job description attached.' : 'Job description detached.',
+                  })
+                }
+              }}
+              className="h-9 max-w-xs rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <option value="">
+                {hiringRequest.jobDescriptionId ? 'None' : 'No job description attached'}
+              </option>
+              {jobDescriptions?.map(jd => (
+                <option key={jd.id} value={jd.id}>
+                  {jd.title}
+                </option>
+              ))}
+            </select>
+            {jobDescriptions === null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={pending}
+                onClick={async () => {
+                  const { listJobDescriptionsAction } = await import(
+                    '@/app/(app)/hiring-requests/actions'
+                  )
+                  const res = await listJobDescriptionsAction()
+                  if (res.ok) setJobDescriptions(res.data.jobDescriptions)
+                }}
+              >
+                Load job descriptions
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {message && (
+          <p
+            className={
+              message.tone === 'ok'
+                ? 'text-sm text-emerald-700 dark:text-emerald-300'
+                : 'text-sm text-rose-700 dark:text-rose-300'
+            }
+            role="status"
+          >
+            {message.text}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
 }

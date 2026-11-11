@@ -48,6 +48,9 @@ const READINESS_ICON: Record<DecisionReadiness, React.ElementType> = {
   NEEDS_INTERVIEW: ClockIcon,
   AWAITING_EVALUATION: ClockIcon,
   READY_FOR_REVIEW: CheckCircle2Icon,
+  // Audit P0-10 — a terminal candidate (HIRED / REJECTED / WITHDRAWN)
+  // has nothing left to decide, so it reads as a finished decision.
+  DECIDED: CheckCircle2Icon,
 }
 
 const DECISION_LABEL: Record<'ADVANCE' | 'HOLD' | 'REJECT' | 'SELECTED', string> = {
@@ -212,8 +215,16 @@ export function DecisionHubView({ hiringRequestId }: Props) {
                 {hr.department ?? '—'} · Hiring Manager: {hr.hiringManagerName ?? 'Unassigned'} · Status: {hr.status}
               </CardDescription>
             </div>
+            {/* Audit P1-18 — ONE "filled" number. This used to render
+                `counts.selected` (the number of SELECTED decisions) under
+                the word "filled", while the hiring-requests list rendered
+                `HiringRequest.filled` (the number of HIRED candidates).
+                Two screens, two numbers, one question. `hr.filled` is the
+                derived HIRED count — the single source of truth.
+                `counts.selected` is still shown below, labelled
+                "Selected", which is what it actually counts. */}
             <div className="text-right text-sm text-slate-500">
-              {counts.selected}/{hr.openings ?? 1} opening{(hr.openings ?? 1) === 1 ? '' : 's'} filled
+              {hr.filled}/{hr.openings ?? 1} opening{(hr.openings ?? 1) === 1 ? '' : 's'} filled
             </div>
           </div>
         </CardHeader>
