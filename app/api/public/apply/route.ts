@@ -17,7 +17,7 @@ import {
   submitPublicApplicationAction,
   type SubmitPublicApplicationInput,
 } from '@/app/(public)/jobs/[slug]/apply-action'
-import { MAX_CV_BASE64_CHARS } from '@/app/(public)/jobs/[slug]/apply-schema'
+import { MAX_CV_BASE64_CHARS, applicationSchema } from '@/app/(public)/jobs/[slug]/apply-schema'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -136,6 +136,30 @@ export async function POST(req: NextRequest) {
   if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
     return NextResponse.json(
       { ok: false, error: { code: 'INVALID_INPUT', message: 'Invalid JSON body.' } },
+      { status: 400 },
+    )
+  }
+
+  // Structural gate on the RAW body, BEFORE it is narrowed.
+  //
+  // The narrowing below (`toSubmitInput`) coerces every field to a string,
+  // so a body with `firstName: 123` would arrive at the action as
+  // `firstName: ''` — well-formed, and therefore past a gate that runs
+  // after the narrowing. Validating the raw body first is what makes the
+  // gate mean anything: a malformed body is rejected as INVALID_INPUT
+  // instead of being silently coerced into a submission with empty
+  // fields.
+  const shape = applicationSchema.safeParse(parsedBody)
+  if (!shape.success) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: 'INVALID_INPUT',
+          message:
+            'Some of the details submitted were not in the expected format. Please check the form and try again.',
+        },
+      },
       { status: 400 },
     )
   }
