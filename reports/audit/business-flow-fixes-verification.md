@@ -236,18 +236,32 @@ codes).
 
 ## 7. Deployment status
 
-**The work is committed locally as `200faa0` on `main`, but it is NOT pushed and NOT deployed.**
+**The work is committed locally as `200faa0` + `7fd1c13` on `main`, but it is NOT pushed and NOT deployed.**
 
-Both credentials in the sandbox expired:
+Two separate credential problems, both outside the code:
 
 | Credential | State | Symptom |
 |---|---|---|
-| `GITHUB_TOKEN` (and the token embedded in the `origin` remote URL) | expired / revoked | `401 Bad credentials` from the GitHub API; `git push` → *"Invalid username or token"* |
-| `VERCEL_TOKEN` | invalid | `v2/user` → `{"code":"forbidden","invalidToken":true}`; `vercel whoami` → *"The token provided via VERCEL_TOKEN environment variable is not valid"* |
+| The previous `GITHUB_TOKEN` (a classic PAT, also embedded in the `origin` remote URL) | expired / revoked | `401 Bad credentials` from the GitHub API; `git push` → *"Invalid username or token"* |
+| A replacement fine-grained PAT (`github_pat_…`) | **authenticates, but is scoped to the wrong repositories** | `GET /user` → `bayomismo` ✅. But `GET /repos/bayomismo/TalentOS_AI` → **404**, and `git push` → **403 "Write access to repository not granted"**. The token sees exactly three repositories: `bayomismo/orvix`, `bayomismo/POP_CHAT`, `bayomismo/POP_HUB`. `TalentOS_AI` is **not** among them |
+| `VERCEL_TOKEN` | invalid | `v2/user`, `v2/teams/<team>` and `v9/projects/<id>` all → `{"code":"forbidden","invalidToken":true}`; `vercel whoami` → *"The token provided via VERCEL_TOKEN environment variable is not valid"* |
 
-No alternate credential path exists in this environment: no `gh` CLI, no SSH key, no
-`~/.git-credentials`, no second remote. Both the push and the deploy therefore need a
-refreshed token — nothing in the code is blocking them.
+**The repository is real and private.** `git ls-remote` has `origin/main` at `93b0e99`, and the
+unauthenticated API returns 404 — the classic shape of a private repo. It is simply not in the
+replacement token's repository selection.
+
+**The fix is one click in the token's settings**, not a new token:
+*Settings → Developer settings → Personal access tokens → fine-grained tokens → your token →
+*Repositories* → add `TalentOS_AI`, and under *Permissions* set **Contents: Read and write**.
+Alternatively, issue a classic PAT with the `repo` scope, which covers every private repository
+on the account.
+
+The Vercel token needs replacing outright — that one has no workaround.
+
+**Production is confirmed to still be running the old build.** `https://talentos-ai-lime.vercel.app/api/cron/offer-expiry`
+returns **404** — that route is new in this remediation, so its absence proves the deployed build
+predates it. There are no GitHub Actions workflows in this repository, so the deploy is either
+Vercel-managed (GitHub integration, auto-deploy on push) or manual.
 
 To finish, with a valid `GITHUB_TOKEN` and `VERCEL_TOKEN`:
 
