@@ -239,7 +239,7 @@ codes).
 
 ## 7. Deployment status
 
-**DEPLOYED to production** — `https://talentos-ai-lime.vercel.app`, deployment `dpl` READY, commit `152abb8`.
+**DEPLOYED to production** — `https://talentos-ai-lime.vercel.app`, deployment `dpl` READY, commit `89a2e76` (== repo HEAD).
 
 ### What the deploy required
 
