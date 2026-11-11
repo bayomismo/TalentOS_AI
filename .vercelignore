@@ -1,0 +1,13 @@
+# Secrets — never uploaded to Vercel
+.env
+.env*.local
+
+# Runtime data: durable CV originals are per-environment state, not source
+.storage
+
+# Build output is produced by Vercel itself
+.next
+
+# Local scratch
+.mavis
+*.log
